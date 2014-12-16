@@ -549,3 +549,40 @@ ot_gfile_atomic_symlink_swap (GFile          *path,
   if (parent_dfd != -1) (void) close (parent_dfd);
   return ret;
 }
+
+GBytes *
+ot_util_fd_readall_bytes (int fd, GCancellable *cancellable, GError **error)
+{
+  gs_unref_object GUnixInputStream *unixin = (GUnixInputStream*)g_unix_input_stream_new (fd, FALSE);
+  gs_unref_object GMemoryOutputStream *memout = (GMemoryOutputStream*)g_memory_output_stream_new_resizable ();
+
+  if (g_output_stream_splice ((GOutputStream*)memout, (GInputStream*)unixin, 0, cancellable, error) < 0)
+    return NULL;
+  
+  return g_memory_output_stream_steal_as_bytes (memout);
+}
+
+char *
+ot_util_fd_readall_utf8 (int fd, GCancellable *cancellable, GError **error)
+{
+  GBytes *ret = ot_util_fd_readall_bytes (fd, cancellable, error);
+  const char *buf;
+  gsize len;
+
+  if (!ret)
+    return NULL;
+
+  buf = g_bytes_get_data (ret, &len);
+
+  if (!g_utf8_validate (buf, len, NULL))
+    {
+      g_bytes_unref (ret);
+      g_set_error (error,
+                   G_IO_ERROR,
+                   G_IO_ERROR_INVALID_DATA,
+                   "Invalid UTF-8");
+      return NULL;
+    }
+
+  return g_bytes_unref_to_data (ret, &len);
+}

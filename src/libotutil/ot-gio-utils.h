@@ -93,5 +93,9 @@ gboolean ot_util_fsync_directory (GFile         *dir,
                                   GCancellable  *cancellable,
                                   GError       **error);
 
+GBytes *ot_util_fd_readall_bytes (int fd, GCancellable *cancellable, GError **error);
+
+char * ot_util_fd_readall_utf8 (int fd, GCancellable *cancellable, GError **error);
+
 G_END_DECLS
 
