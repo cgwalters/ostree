@@ -50,6 +50,17 @@ ot_gfile_type_for_mode (guint32 mode)
     return G_FILE_TYPE_UNKNOWN;
 }
 
+GFileInfo *
+ot_default_struct_stat_to_gfile_info (const struct stat *stbuf)
+{
+  GFileInfo *ret = g_file_info_new ();
+  g_file_info_set_attribute_uint32 (ret, "standard::type", ot_gfile_type_for_mode (stbuf->st_mode));
+  g_file_info_set_attribute_boolean (ret, "standard::is-symlink", S_ISLNK (stbuf->st_mode));
+  g_file_info_set_attribute_uint32 (ret, "unix::uid", stbuf->st_uid);
+  g_file_info_set_attribute_uint32 (ret, "unix::gid", stbuf->st_gid);
+  g_file_info_set_attribute_uint32 (ret, "unix::mode", stbuf->st_mode);
+  return ret;
+}
 
 GFile *
 ot_gfile_from_build_path (const char *first, ...)

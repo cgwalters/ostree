@@ -1355,6 +1355,7 @@ file_header_parse (GVariant         *metadata,
   gboolean ret = FALSE;
   guint32 uid, gid, mode, rdev;
   const char *symlink_target;
+  struct stat stbuf;
   gs_unref_object GFileInfo *ret_file_info = NULL;
   gs_unref_variant GVariant *ret_xattrs = NULL;
 
@@ -1362,30 +1363,25 @@ file_header_parse (GVariant         *metadata,
                  &uid, &gid, &mode, &rdev,
                  &symlink_target, &ret_xattrs);
 
-  uid = GUINT32_FROM_BE (uid);
-  gid = GUINT32_FROM_BE (gid);
-  mode = GUINT32_FROM_BE (mode);
-  rdev = GUINT32_FROM_BE (rdev);
+  stbuf.st_uid = GUINT32_FROM_BE (uid);
+  stbuf.st_gid = GUINT32_FROM_BE (gid);
+  stbuf.st_mode = GUINT32_FROM_BE (mode);
+  stbuf.st_rdev = GUINT32_FROM_BE (rdev);
 
-  ret_file_info = g_file_info_new ();
-  g_file_info_set_attribute_uint32 (ret_file_info, "standard::type", ot_gfile_type_for_mode (mode));
-  g_file_info_set_attribute_boolean (ret_file_info, "standard::is-symlink", S_ISLNK (mode));
-  g_file_info_set_attribute_uint32 (ret_file_info, "unix::uid", uid);
-  g_file_info_set_attribute_uint32 (ret_file_info, "unix::gid", gid);
-  g_file_info_set_attribute_uint32 (ret_file_info, "unix::mode", mode);
+  ret_file_info = ot_default_struct_stat_to_gfile_info (&stbuf);
 
-  if (S_ISREG (mode))
+  if (S_ISREG (stbuf.st_mode))
     {
       ;
     }
-  else if (S_ISLNK (mode))
+  else if (S_ISLNK (stbuf.st_mode))
     {
       g_file_info_set_attribute_byte_string (ret_file_info, "standard::symlink-target", symlink_target);
     }
   else
     {
       g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                   "Corrupted archive file; invalid mode %u", mode);
+                   "Corrupted archive file; invalid mode %u", stbuf.st_mode);
       goto out;
     }
 
@@ -1415,6 +1411,7 @@ zlib_file_header_parse (GVariant         *metadata,
   gboolean ret = FALSE;
   guint64 size;
   guint32 uid, gid, mode, rdev;
+  struct stat stbuf;
   const char *symlink_target;
   gs_unref_object GFileInfo *ret_file_info = NULL;
   gs_unref_variant GVariant *ret_xattrs = NULL;
@@ -1423,32 +1420,26 @@ zlib_file_header_parse (GVariant         *metadata,
                  &uid, &gid, &mode, &rdev,
                  &symlink_target, &ret_xattrs);
 
-  size = GUINT64_FROM_BE (size);
-  uid = GUINT32_FROM_BE (uid);
-  gid = GUINT32_FROM_BE (gid);
-  mode = GUINT32_FROM_BE (mode);
-  rdev = GUINT32_FROM_BE (rdev);
+  stbuf.st_uid = GUINT32_FROM_BE (uid);
+  stbuf.st_gid = GUINT32_FROM_BE (gid);
+  stbuf.st_mode = GUINT32_FROM_BE (mode);
+  stbuf.st_rdev = GUINT32_FROM_BE (rdev);
+  ret_file_info = ot_default_struct_stat_to_gfile_info (&stbuf);
 
-  ret_file_info = g_file_info_new ();
-  g_file_info_set_size (ret_file_info, size);
-  g_file_info_set_attribute_uint32 (ret_file_info, "standard::type", ot_gfile_type_for_mode (mode));
-  g_file_info_set_attribute_boolean (ret_file_info, "standard::is-symlink", S_ISLNK (mode));
-  g_file_info_set_attribute_uint32 (ret_file_info, "unix::uid", uid);
-  g_file_info_set_attribute_uint32 (ret_file_info, "unix::gid", gid);
-  g_file_info_set_attribute_uint32 (ret_file_info, "unix::mode", mode);
+  g_file_info_set_size (ret_file_info, GUINT64_FROM_BE (size));
 
-  if (S_ISREG (mode))
+  if (S_ISREG (stbuf.st_mode))
     {
       ;
     }
-  else if (S_ISLNK (mode))
+  else if (S_ISLNK (stbuf.st_mode))
     {
       g_file_info_set_attribute_byte_string (ret_file_info, "standard::symlink-target", symlink_target);
     }
   else
     {
       g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                   "Corrupted archive file; invalid mode %u", mode);
+                   "Corrupted archive file; invalid mode %u", stbuf.st_mode);
       goto out;
     }
 

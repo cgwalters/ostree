@@ -48,19 +48,15 @@ file_info_from_archive_entry_and_modifier (OstreeRepo *repo,
                                            struct archive_entry *entry,
                                            OstreeRepoCommitModifier *modifier)
 {
-  gs_unref_object GFileInfo *info = g_file_info_new ();
+  gs_unref_object GFileInfo *info = NULL;
   GFileInfo *modified_info = NULL;
   const struct stat *st;
   guint32 file_type;
 
   st = archive_entry_stat (entry);
 
+  info = ot_default_struct_stat_to_gfile_info (st);
   file_type = ot_gfile_type_for_mode (st->st_mode);
-  g_file_info_set_attribute_boolean (info, "standard::is-symlink", S_ISLNK (st->st_mode));
-  g_file_info_set_attribute_uint32 (info, "standard::type", file_type);
-  g_file_info_set_attribute_uint32 (info, "unix::uid", st->st_uid);
-  g_file_info_set_attribute_uint32 (info, "unix::gid", st->st_gid);
-  g_file_info_set_attribute_uint32 (info, "unix::mode", st->st_mode);
 
   if (file_type == G_FILE_TYPE_REGULAR)
     {
