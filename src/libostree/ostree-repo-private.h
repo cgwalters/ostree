@@ -194,6 +194,5 @@ _ostree_repo_gpg_verify_file_with_metadata (OstreeRepo          *self,
                                             GFile               *extra_keyring,
                                             GCancellable        *cancellable,
                                             GError             **error);
-
 G_END_DECLS
 
