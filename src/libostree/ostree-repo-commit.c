@@ -129,7 +129,6 @@ commit_loose_object_trusted (OstreeRepo        *self,
                              const char        *checksum,
                              OstreeObjectType   objtype,
                              const char        *loose_path,
-                             GFile             *temp_file,
                              const char        *temp_filename,
                              gboolean           object_is_symlink,
                              guint32            uid,
@@ -523,7 +522,7 @@ _ostree_repo_commit_trusted_content_bare (OstreeRepo          *self,
       
       if (!commit_loose_object_trusted (self, OSTREE_OBJECT_TYPE_FILE,
                                         loose_objpath,
-                                        NULL, state->temp_filename,
+                                        state->temp_filename,
                                         FALSE, uid, gid, mode,
                                         xattrs, state->fd,
                                         cancellable, error))
@@ -551,7 +550,6 @@ write_object (OstreeRepo         *self,
   gboolean do_commit;
   OstreeRepoMode repo_mode;
   gs_free char *temp_filename = NULL;
-  gs_unref_object GFile *temp_file = NULL;
   gs_unref_object GFile *stored_path = NULL;
   gs_free guchar *ret_csum = NULL;
   gs_unref_object OstreeChecksumInputStream *checksum_input = NULL;
@@ -652,7 +650,6 @@ write_object (OstreeRepo         *self,
                                  cancellable, error))
             goto out;
 
-          temp_file = g_file_get_child (self->tmp_dir, temp_filename);
           if (g_output_stream_splice (temp_out, file_input, 0,
                                       cancellable, error) < 0)
             goto out;
@@ -664,7 +661,6 @@ write_object (OstreeRepo         *self,
                                                   &temp_filename,
                                                   cancellable, error))
             goto out;
-          temp_file = g_file_get_child (self->tmp_dir, temp_filename);
         }
       else if (repo_mode == OSTREE_REPO_MODE_ARCHIVE_Z2)
         {
@@ -679,7 +675,6 @@ write_object (OstreeRepo         *self,
                                           &temp_filename, &temp_out,
                                           cancellable, error))
             goto out;
-          temp_file = g_file_get_child (self->tmp_dir, temp_filename);
           temp_file_is_regular = TRUE;
 
           file_meta = _ostree_zlib_file_header_new (file_info, xattrs);
@@ -714,7 +709,6 @@ write_object (OstreeRepo         *self,
                              cancellable, error))
         goto out;
 
-      temp_file = g_file_get_child (self->tmp_dir, temp_filename);
       if (g_output_stream_splice (temp_out, checksum_input ? (GInputStream*)checksum_input : input,
                                   0,
                                   cancellable, error) < 0)
@@ -745,16 +739,17 @@ write_object (OstreeRepo         *self,
 
   g_assert (actual_checksum != NULL); /* Pacify static analysis */
           
-  if (indexable)
+  if (indexable && temp_file_is_regular)
     {
-      gsize archived_size;
-      gs_unref_object GFileInfo *compressed_info =
-        g_file_query_info (temp_file, G_FILE_ATTRIBUTE_STANDARD_SIZE, 0,
-                           cancellable, error);
-      if (!compressed_info)
-        goto out;
-      archived_size = g_file_info_get_size (compressed_info);
-      repo_store_size_entry (self, actual_checksum, unpacked_size, archived_size);
+      struct stat stbuf;
+
+      if (fstatat (self->tmp_dir_fd, temp_filename, &stbuf, AT_SYMLINK_NOFOLLOW) == -1)
+        {
+          gs_set_error_from_errno (error, errno);
+          goto out;
+        }
+
+      repo_store_size_entry (self, actual_checksum, unpacked_size, stbuf.st_size);
     }
 
   if (!_ostree_repo_has_loose_object (self, actual_checksum, objtype,
@@ -782,7 +777,7 @@ write_object (OstreeRepo         *self,
         fd = g_file_descriptor_based_get_fd ((GFileDescriptorBased*)temp_out);
       
       if (!commit_loose_object_trusted (self, objtype, loose_objpath,
-                                        temp_file, temp_filename,
+                                        temp_filename,
                                         object_is_symlink,
                                         uid, gid, mode,
                                         xattrs, fd,
@@ -804,7 +799,6 @@ write_object (OstreeRepo         *self,
         }
 
       g_clear_pointer (&temp_filename, g_free);
-      g_clear_object (&temp_file);
     }
 
   g_mutex_lock (&self->txn_stats_lock);
