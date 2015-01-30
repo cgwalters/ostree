@@ -98,6 +98,7 @@ OPPROTO(open_splice_and_close)
 OPPROTO(open)
 OPPROTO(write)
 OPPROTO(set_read_source)
+OPPROTO(unset_read_source)
 OPPROTO(close)
 #undef OPPROTO
 
@@ -248,6 +249,10 @@ _ostree_static_delta_part_execute_raw (OstreeRepo      *repo,
           break;
         case OSTREE_STATIC_DELTA_OP_SET_READ_SOURCE:
           if (!dispatch_set_read_source (repo, state, cancellable, error))
+            goto out;
+          break;
+        case OSTREE_STATIC_DELTA_OP_UNSET_READ_SOURCE:
+          if (!dispatch_unset_read_source (repo, state, cancellable, error))
             goto out;
           break;
         case OSTREE_STATIC_DELTA_OP_CLOSE:
@@ -621,6 +626,9 @@ dispatch_open (OstreeRepo                 *repo,
   if (!do_content_open_generic (repo, state, cancellable, error))
     goto out;
 
+  if (!read_varuint64 (state, &state->content_size, error))
+    goto out;
+
   if (!_ostree_repo_open_trusted_content_bare (repo, state->checksum,
                                                state->content_size,
                                                &state->barecommitstate,
@@ -742,6 +750,30 @@ dispatch_set_read_source (OstreeRepo                 *repo,
  out:
   if (!ret)
     g_prefix_error (error, "opcode set-read-source: ");
+  return ret;
+}
+
+static gboolean
+dispatch_unset_read_source (OstreeRepo                 *repo,
+                            StaticDeltaExecutionState  *state,
+                            GCancellable               *cancellable,  
+                            GError                    **error)
+{
+  gboolean ret = FALSE;
+  guint64 source_offset;
+
+  if (state->read_source_fd)
+    {
+      (void) close (state->read_source_fd);
+      state->read_source_fd = -1;
+    }
+
+  g_clear_pointer (&state->read_source_object, g_free);
+  
+  ret = TRUE;
+ out:
+  if (!ret)
+    g_prefix_error (error, "opcode unset-read-source: ");
   return ret;
 }
 

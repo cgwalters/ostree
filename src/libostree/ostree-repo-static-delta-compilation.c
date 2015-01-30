@@ -260,6 +260,37 @@ splice_stream_to_payload (OstreeStaticDeltaPartBuilder  *current_part,
   return ret;
 }
 
+static void
+write_content_mode_xattrs (OstreeRepo                       *repo,
+                           OstreeStaticDeltaBuilder         *builder,
+                           OstreeStaticDeltaPartBuilder     *current_part,
+                           GFileInfo                        *content_finfo,
+                           gsize                            *out_mode_offset,
+                           gsize                            *out_xattr_offset)
+{
+  gsize mode_offset, xattr_offset;
+  guint32 uid =
+    g_file_info_get_attribute_uint32 (content_finfo, "unix::uid");
+  guint32 gid =
+    g_file_info_get_attribute_uint32 (content_finfo, "unix::gid");
+  guint32 mode =
+    g_file_info_get_attribute_uint32 (content_finfo, "unix::mode");
+  gs_unref_variant GVariant *modev
+    = g_variant_ref_sink (g_variant_new ("(uuu)", 
+                                         GUINT32_TO_BE (uid),
+                                         GUINT32_TO_BE (gid),
+                                         GUINT32_TO_BE (mode)));
+
+  *out_mode_offset = write_unique_variant_chunk (current_part,
+                                                 current_part->mode_set,
+                                                 current_part->modes,
+                                                 modev);
+  *out_xattr_offset = write_unique_variant_chunk (current_part,
+                                                  current_part->xattr_set,
+                                                  current_part->xattrs,
+                                                  content_xattrs);
+}
+
 static gboolean
 process_one_object (OstreeRepo                       *repo,
                     OstreeStaticDeltaBuilder         *builder,
@@ -327,26 +358,9 @@ process_one_object (OstreeRepo                       *repo,
   else
     {
       gsize mode_offset, xattr_offset, content_offset;
-      guint32 uid =
-        g_file_info_get_attribute_uint32 (content_finfo, "unix::uid");
-      guint32 gid =
-        g_file_info_get_attribute_uint32 (content_finfo, "unix::gid");
-      guint32 mode =
-        g_file_info_get_attribute_uint32 (content_finfo, "unix::mode");
-      gs_unref_variant GVariant *modev
-        = g_variant_ref_sink (g_variant_new ("(uuu)", 
-                                             GUINT32_TO_BE (uid),
-                                             GUINT32_TO_BE (gid),
-                                             GUINT32_TO_BE (mode)));
 
-      mode_offset = write_unique_variant_chunk (current_part,
-                                                current_part->mode_set,
-                                                current_part->modes,
-                                                modev);
-      xattr_offset = write_unique_variant_chunk (current_part,
-                                                 current_part->xattr_set,
-                                                 current_part->xattrs,
-                                                 content_xattrs);
+      write_content_mode_xattrs (repo, builder, current_part, content_finfo,
+                                 &mode_offset, &xattr_offset);
 
       if (S_ISLNK (mode))
         {
@@ -569,6 +583,79 @@ try_content_rollsum (OstreeRepo                       *repo,
   return ret;
 }
 
+static gboolean
+process_one_rollsum (OstreeRepo                       *repo,
+                     OstreeStaticDeltaBuilder         *builder,
+                     OstreeStaticDeltaPartBuilder    **current_part_val,
+                     ContentRollsum                   *rollsum,
+                     GCancellable                     *cancellable,
+                     GError                          **error)
+{
+  gboolean ret = FALSE;
+  guint64 content_size;
+  gs_unref_object GInputStream *content_stream = NULL;
+  gs_unref_object GFileInfo *content_finfo = NULL;
+  gs_unref_variant GVariant *content_xattrs = NULL;
+  guint64 compressed_size;
+  OstreeStaticDeltaPartBuilder *current_part = *current_part_val;
+
+  /* Check to see if this delta has gone over maximum size */
+  if (current_part->objects->len > 0 &&
+      current_part->payload->len > builder->max_chunk_size_bytes)
+    {
+      *current_part_val = current_part = allocate_part (builder);
+    } 
+
+  if (!ostree_repo_load_file (repo, checksum, &content_stream,
+                              &content_finfo, &content_xattrs,
+                              cancellable, error))
+    goto out;
+  content_size = g_file_info_get_size (content_finfo);
+
+  current_part->uncompressed_size += content_size;
+
+  g_ptr_array_add (current_part->objects, ostree_object_name_serialize (checksum, objtype));
+
+  { gsize mode_offset, xattr_offset, content_offset;
+    gboolean reading_payload = TRUE;
+    guchar source_csum[32];
+
+    write_content_mode_xattrs (repo, builder, current_part, content_finfo,
+                               &mode_offset, &xattr_offset);
+
+    g_string_append_len (current_part->payload, 
+
+    g_string_append_c (current_part->operations, (gchar)OSTREE_STATIC_DELTA_OP_OPEN);
+    _ostree_write_varuint64 (current_part->operations, mode_offset);
+    _ostree_write_varuint64 (current_part->operations, xattr_offset);
+    _ostree_write_varuint64 (current_part->operations, content_size);
+
+    g_hash_table_iter_init (&hiter, to_rollsum->values);
+    while (g_hash_table_iter_next (&hiter, &hkey, &hvalue))
+      {
+        GVariant *chunk = hvalue;
+        if (g_hash_table_contains (from_rollsum->values, hkey))
+          {
+            guint64 offset;
+            g_variant_get (chunk, "(utt)", NULL, NULL, &offset);
+            
+            if (reading_payload)
+              {
+
+              }
+          }
+        total++;
+      }
+
+    g_string_append_c (current_part->operations, (gchar)OSTREE_STATIC_DELTA_OP_CLOSE);
+  }
+
+  ret = TRUE;
+ out:
+  return ret;
+}
+
+
 static gboolean 
 generate_delta_lowlatency (OstreeRepo                       *repo,
                            const char                       *from,
@@ -702,8 +789,7 @@ generate_delta_lowlatency (OstreeRepo                       *repo,
               g_hash_table_size (modified_content_objects));
 
   /* Scan for large objects, so we can fall back to plain HTTP-based
-   * fetch.  In the future this should come after an rsync-style
-   * rolling delta check for modified files.
+   * fetch.
    */
   g_hash_table_iter_init (&hashiter, new_reachable_content);
   while (g_hash_table_iter_next (&hashiter, &key, &value))
@@ -715,6 +801,10 @@ generate_delta_lowlatency (OstreeRepo                       *repo,
       gboolean fallback = FALSE;
 
       ostree_object_name_deserialize (serialized_key, &checksum, &objtype);
+
+      /* Skip content objects we rollsum'd */
+      if (g_hash_table_contains (rollsum_optimized_content_objects, checksum))
+        continue;
 
       if (!ostree_repo_load_object_stream (repo, objtype, checksum,
                                            NULL, &uncompressed_size,
@@ -761,6 +851,10 @@ generate_delta_lowlatency (OstreeRepo                       *repo,
       OstreeObjectType objtype;
 
       ostree_object_name_deserialize (serialized_key, &checksum, &objtype);
+
+      /* Skip content objects we rollsum'd */
+      if (g_hash_table_contains (rollsum_optimized_content_objects, checksum))
+        continue;
 
       if (!process_one_object (repo, builder, &current_part,
                                checksum, objtype,
