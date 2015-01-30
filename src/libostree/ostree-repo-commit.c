@@ -74,7 +74,9 @@ _ostree_repo_get_tmpobject_path (OstreeRepo       *repo,
 }
 
 static GVariant *
-create_file_metadata (GFileInfo *file_info,
+create_file_metadata (guint32       uid,
+                      guint32       gid,
+                      guint32       mode,
                       GVariant     *xattrs)
 {
   GVariant *ret_metadata = NULL;
@@ -84,9 +86,9 @@ create_file_metadata (GFileInfo *file_info,
     tmp_xattrs = g_variant_ref_sink (g_variant_new_array (G_VARIANT_TYPE ("(ayay)"), NULL, 0));
 
   ret_metadata = g_variant_new ("(uuu@a(ayay))",
-                                GUINT32_TO_BE (g_file_info_get_attribute_uint32 (file_info, "unix::uid")),
-                                GUINT32_TO_BE (g_file_info_get_attribute_uint32 (file_info, "unix::gid")),
-                                GUINT32_TO_BE (g_file_info_get_attribute_uint32 (file_info, "unix::mode")),
+                                GUINT32_TO_BE (uid),
+                                GUINT32_TO_BE (gid),
+                                GUINT32_TO_BE (mode),
                                 xattrs ? xattrs : tmp_xattrs);
   g_variant_ref_sink (ret_metadata);
 
@@ -95,14 +97,16 @@ create_file_metadata (GFileInfo *file_info,
 
 static gboolean
 write_file_metadata_to_xattr (int fd,
-                              GFileInfo    *file_info,
+                              guint32       uid,
+                              guint32       gid,
+                              guint32       mode,
                               GVariant     *xattrs,
                               GError       **error)
 {
   gs_unref_variant GVariant *filemeta = NULL;
   int res;
 
-  filemeta = create_file_metadata (file_info, xattrs);
+  filemeta = create_file_metadata (uid, gid, mode, xattrs);
 
   do
     res = fsetxattr (fd, "user.ostreemeta",
@@ -128,9 +132,11 @@ commit_loose_object_trusted (OstreeRepo        *self,
                              GFile             *temp_file,
                              const char        *temp_filename,
                              gboolean           object_is_symlink,
-                             GFileInfo         *file_info,
+                             guint32            uid,
+                             guint32            gid,
+                             guint32            mode,
                              GVariant          *xattrs,
-                             GOutputStream     *temp_out,
+                             int                fd,
                              GCancellable      *cancellable,
                              GError           **error)
 {
@@ -162,8 +168,7 @@ commit_loose_object_trusted (OstreeRepo        *self,
        * as regular files.
        */
       if (G_UNLIKELY (fchownat (self->tmp_dir_fd, temp_filename,
-                                g_file_info_get_attribute_uint32 (file_info, "unix::uid"),
-                                g_file_info_get_attribute_uint32 (file_info, "unix::gid"),
+                                uid, gid,
                                 AT_SYMLINK_NOFOLLOW) == -1))
         {
           gs_set_error_from_errno (error, errno);
@@ -179,22 +184,13 @@ commit_loose_object_trusted (OstreeRepo        *self,
     }
   else
     {
-      int fd;
       int res;
       struct timespec times[2];
 
-      g_assert (temp_out != NULL);
-
-      fd = g_file_descriptor_based_get_fd ((GFileDescriptorBased*)temp_out);
-
       if (objtype == OSTREE_OBJECT_TYPE_FILE && self->mode == OSTREE_REPO_MODE_BARE)
         {
-          g_assert (file_info != NULL);
-
           do
-            res = fchown (fd,
-                          g_file_info_get_attribute_uint32 (file_info, "unix::uid"),
-                          g_file_info_get_attribute_uint32 (file_info, "unix::gid"));
+            res = fchown (fd, uid, gid);
           while (G_UNLIKELY (res == -1 && errno == EINTR));
           if (G_UNLIKELY (res == -1))
             {
@@ -203,7 +199,7 @@ commit_loose_object_trusted (OstreeRepo        *self,
             }
 
           do
-            res = fchmod (fd, g_file_info_get_attribute_uint32 (file_info, "unix::mode"));
+            res = fchmod (fd, mode);
           while (G_UNLIKELY (res == -1 && errno == EINTR));
           if (G_UNLIKELY (res == -1))
             {
@@ -220,9 +216,7 @@ commit_loose_object_trusted (OstreeRepo        *self,
 
       if (objtype == OSTREE_OBJECT_TYPE_FILE && self->mode == OSTREE_REPO_MODE_BARE_USER)
         {
-          g_assert (file_info != NULL);
-
-          if (!write_file_metadata_to_xattr (fd, file_info, xattrs, error))
+          if (!write_file_metadata_to_xattr (fd, uid, gid, mode, xattrs, error))
             goto out;
 
           if (!object_is_symlink)
@@ -232,7 +226,7 @@ commit_loose_object_trusted (OstreeRepo        *self,
                  checkout. To make this work we apply all user bits and the read bits for
                  group/other */
               do
-                res = fchmod (fd, g_file_info_get_attribute_uint32 (file_info, "unix::mode") | 0744);
+                res = fchmod (fd, mode | 0744);
               while (G_UNLIKELY (res == -1 && errno == EINTR));
               if (G_UNLIKELY (res == -1))
                 {
@@ -274,9 +268,6 @@ commit_loose_object_trusted (OstreeRepo        *self,
               goto out;
             }
         }
-          
-      if (!g_output_stream_close (temp_out, cancellable, error))
-        goto out;
     }
   
   if (!_ostree_repo_ensure_loose_objdir_at (self->objects_dir_fd, loose_path,
@@ -464,6 +455,84 @@ fallocate_stream (GFileDescriptorBased      *stream,
 
   ret = TRUE;
  out:
+  return ret;
+}
+
+gboolean
+_ostree_repo_open_trusted_content_bare (OstreeRepo          *self,
+                                        const char          *checksum,
+                                        guint64              content_len,
+                                        OstreeRepoTrustedContentBareCommit *out_state,
+                                        GOutputStream      **out_stream,
+                                        gboolean            *out_have_object,
+                                        GCancellable        *cancellable,
+                                        GError             **error)
+{
+  gboolean ret = FALSE;
+  gs_free char *temp_filename = NULL;
+  gs_unref_object GOutputStream *ret_stream = NULL;
+  gboolean have_obj;
+  char loose_objpath[_OSTREE_LOOSE_PATH_MAX];
+
+  if (!_ostree_repo_has_loose_object (self, checksum, OSTREE_OBJECT_TYPE_FILE,
+                                      &have_obj, loose_objpath,
+                                      cancellable, error))
+    goto out;
+
+  if (!have_obj)
+    {
+      if (!gs_file_open_in_tmpdir_at (self->tmp_dir_fd, 0644, &temp_filename, &ret_stream,
+                                      cancellable, error))
+        goto out;
+      
+      if (!fallocate_stream ((GFileDescriptorBased*)ret_stream, content_len,
+                             cancellable, error))
+        goto out;
+    }
+
+  ret = TRUE;
+  if (!have_obj)
+    {
+      out_state->temp_filename = temp_filename;
+      temp_filename = NULL;
+      out_state->fd = g_file_descriptor_based_get_fd ((GFileDescriptorBased*)ret_stream);
+      gs_transfer_out_value (out_stream, &ret_stream);
+    }
+  *out_have_object = have_obj;
+ out:
+  return ret;
+}
+
+gboolean
+_ostree_repo_commit_trusted_content_bare (OstreeRepo          *self,
+                                          const char          *checksum,
+                                          OstreeRepoTrustedContentBareCommit *state,
+                                          guint32              uid,
+                                          guint32              gid,
+                                          guint32              mode,
+                                          GVariant            *xattrs,
+                                          GCancellable        *cancellable,
+                                          GError             **error)
+{
+  gboolean ret = FALSE;
+  char loose_objpath[_OSTREE_LOOSE_PATH_MAX];
+
+  if (state->fd != -1)
+    {
+      _ostree_loose_path (loose_objpath, checksum, OSTREE_OBJECT_TYPE_FILE, self->mode);
+      
+      if (!commit_loose_object_trusted (self, OSTREE_OBJECT_TYPE_FILE,
+                                        loose_objpath,
+                                        NULL, state->temp_filename,
+                                        FALSE, uid, gid, mode,
+                                        xattrs, state->fd,
+                                        cancellable, error))
+        goto out;
+    }
+
+  ret = TRUE;
+ out:
+  g_free (state->temp_filename);
   return ret;
 }
 
@@ -697,11 +766,26 @@ write_object (OstreeRepo         *self,
 
   if (do_commit)
     {
-      if (!commit_loose_object_trusted (self, actual_checksum,
-                                        objtype, loose_objpath,
+      guint32 uid, gid, mode;
+      int fd = -1;
+
+      if (file_info)
+        {
+          uid = g_file_info_get_attribute_uint32 (file_info, "unix::uid");
+          gid = g_file_info_get_attribute_uint32 (file_info, "unix::gid");
+          mode = g_file_info_get_attribute_uint32 (file_info, "unix::mode");
+        }
+      else
+        uid = gid = mode = 0;
+
+      if (temp_out)
+        fd = g_file_descriptor_based_get_fd ((GFileDescriptorBased*)temp_out);
+      
+      if (!commit_loose_object_trusted (self, objtype, loose_objpath,
                                         temp_file, temp_filename,
-                                        object_is_symlink, file_info,
-                                        xattrs, temp_out,
+                                        object_is_symlink,
+                                        uid, gid, mode,
+                                        xattrs, fd,
                                         cancellable, error))
         goto out;
 
