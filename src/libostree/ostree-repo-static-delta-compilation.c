@@ -409,7 +409,7 @@ ordered_rollsums_free (OrderedRollsums  *ohash)
 }
 
 static gboolean
-rollsum_chunks_crc32 (GInputStream     *istream,
+rollsum_chunks_crc32 (GBytes           *bytes,
                       OrderedRollsums **out_rollsums,
                       GCancellable     *cancellable,
                       GError          **error)
@@ -418,16 +418,19 @@ rollsum_chunks_crc32 (GInputStream     *istream,
   gsize start = 0;
   gboolean rollsum_end = FALSE;
   OrderedRollsums *ret_rollsums = g_new0 (OrderedRollsums, 1);
+  const guint8 *buf;
+  gsize buflen;
   gs_unref_object GBufferedInputStream *bufinput =
     (GBufferedInputStream*) g_buffered_input_stream_new_sized (istream, ROLLSUM_BLOB_MAX);
 
   ret_rollsums->keys = g_ptr_array_new_with_free_func ((GDestroyNotify)g_variant_unref);
   ret_rollsums->values = g_hash_table_new (NULL, NULL);
 
+  buf = g_bytes_get_data (bytes, &buflen);
+
   while (TRUE)
     {
       gssize bytes_read;
-      const guint8 *buf;
       gsize bufsize;
       int offset, bits;
 
@@ -495,6 +498,55 @@ content_rollsums_free (ContentRollsum  *rollsum)
   g_free (rollsum);
 }
 
+/* Load a content object, uncompressing it to an unlinked tmpfile
+   that's mmap()'d and suitable for seeking.
+ */
+static gboolean
+get_unpacked_unlinked_content (OstreeRepo       *repo,
+                               const char       *checksum,
+                               GBytes           *out_content,
+                               GFileInfo       **out_finfo,
+                               GCancellable     *cancellable,
+                               GError          **error)
+{
+  gboolean ret = FALSE;
+  gsize bytes_written;
+  gs_free char *tmpname = "tmpostree-deltaobj-XXXXXX";
+  gs_fd_close int fd = -1;
+  gs_unref_bytes GBytes ret_content = NULL;
+  gs_unref_object GInputStream *istream = NULL;
+  gs_unref_object GInputStream *ret_finfo = NULL;
+  gs_unref_object GOutputStream *out = NULL;
+
+  fd = g_mkstemp (tmpname);
+  if (fd == -1)
+    {
+      gs_set_error_from_errno (error, errno);
+      goto out;
+    }
+  /* Doesn't need a name */
+  (void) unlink (tmpname);
+
+  if (!ostree_repo_load_file (repo, checksum, &istream, &ret_finfo, NULL,
+                              cancellable, error))
+    goto out;
+  
+  out = g_unix_output_stream_new (fd, FALSE);
+  if (!g_output_stream_splice (out, istream, G_OUTPUT_STREAM_SPLICE_CLOSE_TARGET,
+                               &bytes_written, cancellable, error))
+    goto out;
+  
+  { GMappedFile *mfile = g_mapped_file_new_from_fd (fd, FALSE, error);
+    ret_content = g_mapped_file_get_bytes (mfile);
+    g_mapped_file_unref (mfile);
+  }
+
+  ret = TRUE;
+  gs_transfer_out_value (out_content, &ret_content);
+ out:
+  return ret;
+}
+
 static gboolean
 try_content_rollsum (OstreeRepo                       *repo,
                      const char                       *from,
@@ -506,9 +558,9 @@ try_content_rollsum (OstreeRepo                       *repo,
   gboolean ret = FALSE;
   OrderedRollsums *from_rollsum = NULL;
   OrderedRollsums *to_rollsum = NULL;
-  gs_unref_object GInputStream *from_istream = NULL;
+  gs_unref_bytes GBytes *tmp_from = NULL;
+  gs_unref_bytes GBytes *tmp_to = NULL;
   gs_unref_object GFileInfo *from_finfo = NULL;
-  gs_unref_object GInputStream *to_istream = NULL;
   gs_unref_object GFileInfo *to_finfo = NULL;
   ContentRollsum *ret_rollsum = NULL;
   guint total = 0;
@@ -520,11 +572,14 @@ try_content_rollsum (OstreeRepo                       *repo,
 
   *out_rollsum = NULL;
 
-  if (!ostree_repo_load_file (repo, from, &from_istream, &from_finfo, NULL,
-                              cancellable, error))
+  /* Load the content objects, splice them to uncompressed temporary files that
+   * we can just mmap() and seek around in conveniently.
+   */
+  if (!get_unpacked_unlinked_content (repo, from, &tmp_from, &from_finfo, NULL,
+                                      cancellable, error))
     goto out;
-  if (!ostree_repo_load_file (repo, to, &to_istream, &to_finfo, NULL,
-                              cancellable, error))
+  if (!get_unpacked_unlinked_content (repo, to, &tmp_to, &to_finfo, NULL,
+                                      cancellable, error))
     goto out;
 
   /* Only try to rollsum regular files obviously */ 
@@ -551,8 +606,9 @@ try_content_rollsum (OstreeRepo                       *repo,
       GVariant *chunk = hvalue;
       if (g_hash_table_contains (from_rollsum->values, hkey))
         {
-          guint64 offset;
-          g_variant_get (chunk, "(utt)", NULL, NULL, &offset);
+          guint64 start, offset;
+          g_variant_get (chunk, "(utt)", NULL, &start, &offset);
+
           matches++;
           match_size += offset;
         }
@@ -616,14 +672,17 @@ process_one_rollsum (OstreeRepo                       *repo,
 
   g_ptr_array_add (current_part->objects, ostree_object_name_serialize (checksum, objtype));
 
-  { gsize mode_offset, xattr_offset, content_offset;
+  { gsize mode_offset, xattr_offset, content_offset, from_csum_offset;
     gboolean reading_payload = TRUE;
     guchar source_csum[32];
 
     write_content_mode_xattrs (repo, builder, current_part, content_finfo,
                                &mode_offset, &xattr_offset);
 
-    g_string_append_len (current_part->payload, 
+    /* Write the origin checksum */
+    ostree_checksum_inplace_to_bytes (rollsum->from_checksum, source_csum);
+    from_csum_offset = current_part->payload->len;
+    g_string_append_len (current_part->payload, source_csum, sizeof (source_csum));
 
     g_string_append_c (current_part->operations, (gchar)OSTREE_STATIC_DELTA_OP_OPEN);
     _ostree_write_varuint64 (current_part->operations, mode_offset);
@@ -634,14 +693,26 @@ process_one_rollsum (OstreeRepo                       *repo,
     while (g_hash_table_iter_next (&hiter, &hkey, &hvalue))
       {
         GVariant *chunk = hvalue;
+        guint64 start, offset;
+
+        g_variant_get (chunk, "(utt)", NULL, &start, &offset);
+
         if (g_hash_table_contains (from_rollsum->values, hkey))
           {
-            guint64 offset;
-            g_variant_get (chunk, "(utt)", NULL, NULL, &offset);
             
             if (reading_payload)
               {
-
+                g_string_append_c (current_part->operations, (gchar)OSTREE_STATIC_DELTA_OP_SET_READ_SOURCE);
+                _ostree_write_varuint64 (current_part->operations, from_csum_offset);
+                reading_payload = FALSE;
+              }
+          }
+        else
+          {
+            if (!reading_payload)
+              {
+                g_string_append_c (current_part->operations, (gchar)OSTREE_STATIC_DELTA_OP_UNSET_READ_SOURCE);
+                reading_payload = TRUE;
               }
           }
         total++;
