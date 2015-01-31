@@ -260,7 +260,6 @@ splice_stream_to_payload (OstreeStaticDeltaPartBuilder  *current_part,
 
 static void
 write_content_mode_xattrs (OstreeRepo                       *repo,
-                           OstreeStaticDeltaBuilder         *builder,
                            OstreeStaticDeltaPartBuilder     *current_part,
                            GFileInfo                        *content_finfo,
                            GVariant                         *content_xattrs,
@@ -360,7 +359,7 @@ process_one_object (OstreeRepo                       *repo,
 
       mode = g_file_info_get_attribute_uint32 (content_finfo, "unix::mode");
 
-      write_content_mode_xattrs (repo, builder, current_part, content_finfo, content_xattrs,
+      write_content_mode_xattrs (repo, current_part, content_finfo, content_xattrs,
                                  &mode_offset, &xattr_offset);
 
       if (S_ISLNK (mode))
@@ -580,6 +579,7 @@ process_one_rollsum (OstreeRepo                       *repo,
                               cancellable, error))
     goto out;
   content_size = g_file_info_get_size (content_finfo);
+  g_assert_cmpint (tmp_to_len, ==, content_size);
 
   current_part->uncompressed_size += content_size;
 
@@ -590,7 +590,7 @@ process_one_rollsum (OstreeRepo                       *repo,
     guchar source_csum[32];
     guint i;
 
-    write_content_mode_xattrs (repo, builder, current_part, content_finfo, content_xattrs,
+    write_content_mode_xattrs (repo, current_part, content_finfo, content_xattrs,
                                &mode_offset, &xattr_offset);
 
     /* Write the origin checksum */
@@ -617,7 +617,7 @@ process_one_rollsum (OstreeRepo                       *repo,
           g_variant_get (match, "(uttt)", &crc, &offset, &to_start, &from_start);
 
           prefix = to_start - writing_offset;
-          
+
           if (prefix > 0)
             {
               if (!reading_payload)
@@ -626,6 +626,7 @@ process_one_rollsum (OstreeRepo                       *repo,
                   reading_payload = TRUE;
                 }
               
+              g_assert_cmpint (writing_offset + prefix, <=, tmp_to_len);
               append_payload_chunk_and_write (current_part, tmp_to_buf + writing_offset, prefix);
               writing_offset += prefix;
             }
@@ -642,11 +643,18 @@ process_one_rollsum (OstreeRepo                       *repo,
           _ostree_write_varuint64 (current_part->operations, from_start);
           writing_offset += offset;
         }
+
+      if (!reading_payload)
+        {
+          g_string_append_c (current_part->operations, (gchar)OSTREE_STATIC_DELTA_OP_UNSET_READ_SOURCE);
+          reading_payload = TRUE;
+        }
       
-      { guint64 remainder = tmp_to_len - to_start;
+      { guint64 remainder = tmp_to_len - writing_offset;
         if (remainder > 0)
           append_payload_chunk_and_write (current_part, tmp_to_buf + writing_offset, remainder);
         writing_offset += remainder;
+        g_assert_cmpint (writing_offset, ==, tmp_to_len);
       }
 
       g_assert_cmpint (writing_offset, ==, content_size);

@@ -37,28 +37,30 @@ rollsum_chunks_crc32 (GBytes           *bytes)
   GHashTable *ret_rollsums = NULL;
   const guint8 *buf;
   gsize buflen;
+  gsize remaining;
 
   ret_rollsums = g_hash_table_new_full (NULL, NULL, NULL, (GDestroyNotify)g_ptr_array_unref);
 
   buf = g_bytes_get_data (bytes, &buflen);
 
-  while (start < buflen)
+  remaining = buflen;
+  while (remaining > 0)
     {
       int offset, bits;
 
       if (!rollsum_end)
         {
-          offset = bupsplit_find_ofs (buf + start, MIN(G_MAXINT32, buflen), &bits); 
+          offset = bupsplit_find_ofs (buf + start, MIN(G_MAXINT32, remaining), &bits); 
           if (offset == 0)
             {
               rollsum_end = TRUE;
-              offset = MIN(ROLLSUM_BLOB_MAX, buflen);
+              offset = MIN(ROLLSUM_BLOB_MAX, remaining);
             }
           else if (offset > ROLLSUM_BLOB_MAX)
             offset = ROLLSUM_BLOB_MAX;
         }
       else
-        offset = MIN(ROLLSUM_BLOB_MAX, buflen);
+        offset = MIN(ROLLSUM_BLOB_MAX, remaining);
 
       /* Use zlib's crc32 */
       { guint32 crc = crc32 (0L, NULL, 0);
@@ -78,6 +80,7 @@ rollsum_chunks_crc32 (GBytes           *bytes)
       }
 
       start += offset;
+      remaining -= offset;
     }
 
   return ret_rollsums;
@@ -98,7 +101,7 @@ compare_matches (const void *app,
 
   g_assert_cmpint (a_start, !=, b_start);
 
-  if (a < b)
+  if (a_start < b_start)
     return -1;
   return 1;
 }
@@ -138,7 +141,6 @@ _ostree_compute_rollsum_matches (GBytes                           *from,
       if (from_chunks != NULL)
         {
           guint i;
-          gboolean matched = FALSE;
 
           ret_rollsum->crcmatches++;
 
@@ -171,16 +173,13 @@ _ostree_compute_rollsum_matches (GBytes                           *from,
                       ret_rollsum->bufmatches++;
                       ret_rollsum->match_size += to_offset;
                       g_ptr_array_add (matches, g_variant_ref_sink (match));
-                      matched = TRUE;
                       break; /* Don't need any more matches */
                     } 
                 }
-              if (matched)
-                break;
             }
         }
 
-      ret_rollsum->total++;
+      ret_rollsum->total += to_chunks->len;
     }
 
   g_ptr_array_sort (matches, compare_matches);

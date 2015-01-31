@@ -659,8 +659,6 @@ dispatch_write (OstreeRepo                 *repo,
     goto out;
   if (!read_varuint64 (state, &content_offset, error))
     goto out;
-  if (!validate_ofs (state, content_offset, content_size, error))
-    goto out;
 
   if (!state->have_obj)
     {
@@ -703,6 +701,9 @@ dispatch_write (OstreeRepo                 *repo,
         }
       else
         {
+          if (!validate_ofs (state, content_offset, content_size, error))
+            goto out;
+
           if (!g_output_stream_write_all (state->content_out,
                                           state->payload_data + content_offset,
                                           content_size,
@@ -796,14 +797,10 @@ dispatch_close (OstreeRepo                 *repo,
         goto out;
     }
 
-  if (state->read_source_fd)
-    {
-      (void) close (state->read_source_fd);
-      state->read_source_fd = -1;
-    }
+  if (!dispatch_unset_read_source (repo, state, cancellable, error))
+    goto out;
       
   g_clear_pointer (&state->xattrs, g_variant_unref);
-  g_clear_pointer (&state->read_source_object, g_free);
   g_clear_object (&state->content_out);
   
   state->checksum_index++;
