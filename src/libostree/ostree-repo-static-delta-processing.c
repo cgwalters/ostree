@@ -760,7 +760,6 @@ dispatch_unset_read_source (OstreeRepo                 *repo,
                             GError                    **error)
 {
   gboolean ret = FALSE;
-  guint64 source_offset;
 
   if (state->read_source_fd)
     {
@@ -771,7 +770,7 @@ dispatch_unset_read_source (OstreeRepo                 *repo,
   g_clear_pointer (&state->read_source_object, g_free);
   
   ret = TRUE;
- out:
+  /* out: */
   if (!ret)
     g_prefix_error (error, "opcode unset-read-source: ");
   return ret;

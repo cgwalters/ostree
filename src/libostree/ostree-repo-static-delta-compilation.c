@@ -21,18 +21,16 @@
 #include "config.h"
 
 #include <string.h>
-#include <zlib.h>
+#include <gio/gunixoutputstream.h>
 
 #include "ostree-core-private.h"
 #include "ostree-repo-private.h"
 #include "ostree-lzma-compressor.h"
 #include "ostree-repo-static-delta-private.h"
 #include "ostree-diff.h"
+#include "ostree-rollsum.h"
 #include "otutil.h"
 #include "ostree-varint.h"
-#include "bupsplit.h"
-
-#define ROLLSUM_BLOB_MAX (8192*4)
 
 typedef struct {
   guint64 uncompressed_size;
@@ -265,10 +263,10 @@ write_content_mode_xattrs (OstreeRepo                       *repo,
                            OstreeStaticDeltaBuilder         *builder,
                            OstreeStaticDeltaPartBuilder     *current_part,
                            GFileInfo                        *content_finfo,
+                           GVariant                         *content_xattrs,
                            gsize                            *out_mode_offset,
                            gsize                            *out_xattr_offset)
 {
-  gsize mode_offset, xattr_offset;
   guint32 uid =
     g_file_info_get_attribute_uint32 (content_finfo, "unix::uid");
   guint32 gid =
@@ -358,8 +356,11 @@ process_one_object (OstreeRepo                       *repo,
   else
     {
       gsize mode_offset, xattr_offset, content_offset;
+      guint32 mode;
 
-      write_content_mode_xattrs (repo, builder, current_part, content_finfo,
+      mode = g_file_info_get_attribute_uint32 (content_finfo, "unix::mode");
+
+      write_content_mode_xattrs (repo, builder, current_part, content_finfo, content_xattrs,
                                  &mode_offset, &xattr_offset);
 
       if (S_ISLNK (mode))
@@ -396,105 +397,17 @@ process_one_object (OstreeRepo                       *repo,
 }
 
 typedef struct {
-  GPtrArray *keys;
-  GHashTable *values;
-} OrderedRollsums;
-
-static void
-ordered_rollsums_free (OrderedRollsums  *ohash)
-{
-  g_ptr_array_unref (ohash->keys);
-  g_hash_table_unref (ohash->values);
-  g_free (ohash);
-}
-
-static gboolean
-rollsum_chunks_crc32 (GBytes           *bytes,
-                      OrderedRollsums **out_rollsums,
-                      GCancellable     *cancellable,
-                      GError          **error)
-{
-  gboolean ret = FALSE;
-  gsize start = 0;
-  gboolean rollsum_end = FALSE;
-  OrderedRollsums *ret_rollsums = g_new0 (OrderedRollsums, 1);
-  const guint8 *buf;
-  gsize buflen;
-  gs_unref_object GBufferedInputStream *bufinput =
-    (GBufferedInputStream*) g_buffered_input_stream_new_sized (istream, ROLLSUM_BLOB_MAX);
-
-  ret_rollsums->keys = g_ptr_array_new_with_free_func ((GDestroyNotify)g_variant_unref);
-  ret_rollsums->values = g_hash_table_new (NULL, NULL);
-
-  buf = g_bytes_get_data (bytes, &buflen);
-
-  while (TRUE)
-    {
-      gssize bytes_read;
-      gsize bufsize;
-      int offset, bits;
-
-      bytes_read = g_buffered_input_stream_fill (bufinput, -1, cancellable, error);
-      if (bytes_read == -1)
-        goto out;
-      if (bytes_read == 0)
-        break;
-
-      buf = g_buffered_input_stream_peek_buffer (bufinput, &bufsize);
-
-      if (!rollsum_end)
-        {
-          offset = bupsplit_find_ofs (buf, MIN(G_MAXINT32, bufsize), &bits); 
-          if (offset == 0)
-            {
-              rollsum_end = TRUE;
-              offset = MIN(ROLLSUM_BLOB_MAX, bufsize);
-            }
-          else if (offset > ROLLSUM_BLOB_MAX)
-            offset = ROLLSUM_BLOB_MAX;
-        }
-      else
-        offset = MIN(ROLLSUM_BLOB_MAX, bufsize);
-
-      if (!g_input_stream_skip ((GInputStream*)bufinput, bufsize, cancellable, error))
-        goto out;
-
-      /* Use zlib's crc32 */
-      { guint32 crc = crc32 (0L, NULL, 0);
-        GVariant *val;
-
-        crc = crc32 (crc, buf, offset);
-
-        val = g_variant_ref_sink (g_variant_new ("(utt)", crc, (guint64) start, (guint64)offset));
-        g_ptr_array_add (ret_rollsums->keys, val);
-        g_hash_table_insert (ret_rollsums->values, GUINT_TO_POINTER (crc), val);
-      }
-
-      start += offset;
-    }
-
-  ret = TRUE;
-  gs_transfer_out_value (out_rollsums, &ret_rollsums);
- out:
-  if (ret_rollsums)
-    ordered_rollsums_free (ret_rollsums);
-  return ret;
-}
-
-typedef struct {
   char *from_checksum;
-  OrderedRollsums *from_rollsums;
-  OrderedRollsums *to_rollsums;
-  guint match_ratio;
-  guint64 match_size;
+  OstreeRollsumMatches *matches;
+  GBytes *tmp_to;
 } ContentRollsum;
 
 static void
 content_rollsums_free (ContentRollsum  *rollsum)
 {
   g_free (rollsum->from_checksum);
-  ordered_rollsums_free (rollsum->from_rollsums);
-  ordered_rollsums_free (rollsum->to_rollsums);
+  _ostree_rollsum_matches_free (rollsum->matches);
+  g_bytes_unref (rollsum->tmp_to);
   g_free (rollsum);
 }
 
@@ -504,18 +417,17 @@ content_rollsums_free (ContentRollsum  *rollsum)
 static gboolean
 get_unpacked_unlinked_content (OstreeRepo       *repo,
                                const char       *checksum,
-                               GBytes           *out_content,
+                               GBytes          **out_content,
                                GFileInfo       **out_finfo,
                                GCancellable     *cancellable,
                                GError          **error)
 {
   gboolean ret = FALSE;
-  gsize bytes_written;
-  gs_free char *tmpname = "tmpostree-deltaobj-XXXXXX";
+  gs_free char *tmpname = g_strdup ("tmpostree-deltaobj-XXXXXX");
   gs_fd_close int fd = -1;
-  gs_unref_bytes GBytes ret_content = NULL;
+  gs_unref_bytes GBytes *ret_content = NULL;
   gs_unref_object GInputStream *istream = NULL;
-  gs_unref_object GInputStream *ret_finfo = NULL;
+  gs_unref_object GFileInfo *ret_finfo = NULL;
   gs_unref_object GOutputStream *out = NULL;
 
   fd = g_mkstemp (tmpname);
@@ -530,10 +442,16 @@ get_unpacked_unlinked_content (OstreeRepo       *repo,
   if (!ostree_repo_load_file (repo, checksum, &istream, &ret_finfo, NULL,
                               cancellable, error))
     goto out;
+
+  if (g_file_info_get_file_type (ret_finfo) != G_FILE_TYPE_REGULAR)
+    {
+      ret = TRUE;
+      goto out;
+    }
   
   out = g_unix_output_stream_new (fd, FALSE);
-  if (!g_output_stream_splice (out, istream, G_OUTPUT_STREAM_SPLICE_CLOSE_TARGET,
-                               &bytes_written, cancellable, error))
+  if (g_output_stream_splice (out, istream, G_OUTPUT_STREAM_SPLICE_CLOSE_TARGET,
+                              cancellable, error) < 0)
     goto out;
   
   { GMappedFile *mfile = g_mapped_file_new_from_fd (fd, FALSE, error);
@@ -556,93 +474,85 @@ try_content_rollsum (OstreeRepo                       *repo,
                      GError                          **error)
 {
   gboolean ret = FALSE;
-  OrderedRollsums *from_rollsum = NULL;
-  OrderedRollsums *to_rollsum = NULL;
+  gs_unref_hashtable GHashTable *from_rollsum = NULL;
+  gs_unref_hashtable GHashTable *to_rollsum = NULL;
   gs_unref_bytes GBytes *tmp_from = NULL;
   gs_unref_bytes GBytes *tmp_to = NULL;
   gs_unref_object GFileInfo *from_finfo = NULL;
   gs_unref_object GFileInfo *to_finfo = NULL;
+  OstreeRollsumMatches *matches;
   ContentRollsum *ret_rollsum = NULL;
-  guint total = 0;
-  guint matches = 0;
-  guint match_ratio = 0;
-  guint64 match_size = 0;
-  gpointer hkey, hvalue;
-  GHashTableIter hiter;
 
   *out_rollsum = NULL;
 
   /* Load the content objects, splice them to uncompressed temporary files that
    * we can just mmap() and seek around in conveniently.
    */
-  if (!get_unpacked_unlinked_content (repo, from, &tmp_from, &from_finfo, NULL,
+  if (!get_unpacked_unlinked_content (repo, from, &tmp_from, &from_finfo,
                                       cancellable, error))
     goto out;
-  if (!get_unpacked_unlinked_content (repo, to, &tmp_to, &to_finfo, NULL,
+  if (!get_unpacked_unlinked_content (repo, to, &tmp_to, &to_finfo,
                                       cancellable, error))
     goto out;
 
   /* Only try to rollsum regular files obviously */ 
-  if (!(g_file_info_get_file_type (from_finfo) == G_FILE_TYPE_REGULAR
-        && g_file_info_get_file_type (to_finfo) == G_FILE_TYPE_REGULAR))
+  if (!(tmp_from && tmp_to))
     {
       ret = TRUE;
       goto out;
     }
 
-  g_assert (from_istream && to_istream);
+  matches = _ostree_compute_rollsum_matches (tmp_from, tmp_to);
 
-  if (!rollsum_chunks_crc32 (from_istream, &from_rollsum, cancellable, error))
-    goto out;
-  if (!rollsum_chunks_crc32 (to_istream, &to_rollsum, cancellable, error))
-    goto out;
+  { guint match_ratio = (matches->bufmatches*100)/matches->total;
 
-  g_clear_object (&from_istream);
-  g_clear_object (&to_istream);
+    /* Only proceed if the file contains (arbitrary) more than 25% of
+     * the previous chunks.
+     */
+    if (match_ratio < 25)
+      {
+        ret = TRUE;
+        goto out;
+      }
+  }
 
-  g_hash_table_iter_init (&hiter, to_rollsum->values);
-  while (g_hash_table_iter_next (&hiter, &hkey, &hvalue))
-    {
-      GVariant *chunk = hvalue;
-      if (g_hash_table_contains (from_rollsum->values, hkey))
-        {
-          guint64 start, offset;
-          g_variant_get (chunk, "(utt)", NULL, &start, &offset);
-
-          matches++;
-          match_size += offset;
-        }
-      total++;
-    }
-
-  match_ratio = (matches*100)/total;
-
-  /* Only proceed if the file contains (arbitrary) more than 25% of
-   * the previous chunks.
-   */
-  if (match_ratio < 25)
-    {
-      ret = TRUE;
-      goto out;
-    }
+  g_printerr ("rollsum for %s; crcs=%u bufs=%u total=%u matchsize=%llu\n",
+              to, matches->crcmatches,
+              matches->bufmatches,
+              matches->total, (unsigned long long)matches->match_size);
 
   ret_rollsum = g_new0 (ContentRollsum, 1);
-  ret_rollsum->match_ratio = match_ratio;
-  ret_rollsum->match_size = match_size;
   ret_rollsum->from_checksum = g_strdup (from);
-  ret_rollsum->from_rollsums = from_rollsum; from_rollsum = NULL;
-  ret_rollsum->to_rollsums = to_rollsum; to_rollsum = NULL;
+  ret_rollsum->matches = matches; matches = NULL;
+  ret_rollsum->tmp_to = tmp_to; tmp_to = NULL;
   
   ret = TRUE;
   gs_transfer_out_value (out_rollsum, &ret_rollsum);
  out:
+  if (matches)
+    _ostree_rollsum_matches_free (matches);
   return ret;
+}
+
+static void
+append_payload_chunk_and_write (OstreeStaticDeltaPartBuilder    *current_part,
+                                const guint8                    *buf,
+                                guint64                          offset)
+{
+  guint64 payload_start;
+
+  payload_start = current_part->payload->len;
+  g_string_append_len (current_part->payload, (char*)buf, offset);
+  g_string_append_c (current_part->operations, (gchar)OSTREE_STATIC_DELTA_OP_WRITE);
+  _ostree_write_varuint64 (current_part->operations, offset);
+  _ostree_write_varuint64 (current_part->operations, payload_start);
 }
 
 static gboolean
 process_one_rollsum (OstreeRepo                       *repo,
                      OstreeStaticDeltaBuilder         *builder,
                      OstreeStaticDeltaPartBuilder    **current_part_val,
+                     const char                       *to_checksum,
                      ContentRollsum                   *rollsum,
                      GCancellable                     *cancellable,
                      GError                          **error)
@@ -652,8 +562,9 @@ process_one_rollsum (OstreeRepo                       *repo,
   gs_unref_object GInputStream *content_stream = NULL;
   gs_unref_object GFileInfo *content_finfo = NULL;
   gs_unref_variant GVariant *content_xattrs = NULL;
-  guint64 compressed_size;
   OstreeStaticDeltaPartBuilder *current_part = *current_part_val;
+  const guint8 *tmp_to_buf;
+  gsize tmp_to_len;
 
   /* Check to see if this delta has gone over maximum size */
   if (current_part->objects->len > 0 &&
@@ -662,7 +573,9 @@ process_one_rollsum (OstreeRepo                       *repo,
       *current_part_val = current_part = allocate_part (builder);
     } 
 
-  if (!ostree_repo_load_file (repo, checksum, &content_stream,
+  tmp_to_buf = g_bytes_get_data (rollsum->tmp_to, &tmp_to_len);
+
+  if (!ostree_repo_load_file (repo, to_checksum, &content_stream,
                               &content_finfo, &content_xattrs,
                               cancellable, error))
     goto out;
@@ -670,53 +583,75 @@ process_one_rollsum (OstreeRepo                       *repo,
 
   current_part->uncompressed_size += content_size;
 
-  g_ptr_array_add (current_part->objects, ostree_object_name_serialize (checksum, objtype));
+  g_ptr_array_add (current_part->objects, ostree_object_name_serialize (to_checksum, OSTREE_OBJECT_TYPE_FILE));
 
-  { gsize mode_offset, xattr_offset, content_offset, from_csum_offset;
+  { gsize mode_offset, xattr_offset, from_csum_offset;
     gboolean reading_payload = TRUE;
     guchar source_csum[32];
+    guint i;
 
-    write_content_mode_xattrs (repo, builder, current_part, content_finfo,
+    write_content_mode_xattrs (repo, builder, current_part, content_finfo, content_xattrs,
                                &mode_offset, &xattr_offset);
 
     /* Write the origin checksum */
     ostree_checksum_inplace_to_bytes (rollsum->from_checksum, source_csum);
     from_csum_offset = current_part->payload->len;
-    g_string_append_len (current_part->payload, source_csum, sizeof (source_csum));
+    g_string_append_len (current_part->payload, (char*)source_csum, sizeof (source_csum));
 
     g_string_append_c (current_part->operations, (gchar)OSTREE_STATIC_DELTA_OP_OPEN);
     _ostree_write_varuint64 (current_part->operations, mode_offset);
     _ostree_write_varuint64 (current_part->operations, xattr_offset);
     _ostree_write_varuint64 (current_part->operations, content_size);
 
-    g_hash_table_iter_init (&hiter, to_rollsum->values);
-    while (g_hash_table_iter_next (&hiter, &hkey, &hvalue))
-      {
-        GVariant *chunk = hvalue;
-        guint64 start, offset;
+    { guint64 writing_offset = 0;
+      guint64 offset = 0, to_start = 0, from_start = 0;
+      GPtrArray *matchlist = rollsum->matches->matches;
 
-        g_variant_get (chunk, "(utt)", NULL, &start, &offset);
+      g_assert (matchlist->len > 0);
+      for (i = 0; i < matchlist->len; i++)
+        {
+          GVariant *match = matchlist->pdata[i];
+          guint32 crc;
+          guint64 prefix;
+          
+          g_variant_get (match, "(uttt)", &crc, &offset, &to_start, &from_start);
 
-        if (g_hash_table_contains (from_rollsum->values, hkey))
-          {
-            
-            if (reading_payload)
-              {
-                g_string_append_c (current_part->operations, (gchar)OSTREE_STATIC_DELTA_OP_SET_READ_SOURCE);
-                _ostree_write_varuint64 (current_part->operations, from_csum_offset);
-                reading_payload = FALSE;
-              }
-          }
-        else
-          {
-            if (!reading_payload)
-              {
-                g_string_append_c (current_part->operations, (gchar)OSTREE_STATIC_DELTA_OP_UNSET_READ_SOURCE);
-                reading_payload = TRUE;
-              }
-          }
-        total++;
+          prefix = to_start - writing_offset;
+          
+          if (prefix > 0)
+            {
+              if (!reading_payload)
+                {
+                  g_string_append_c (current_part->operations, (gchar)OSTREE_STATIC_DELTA_OP_UNSET_READ_SOURCE);
+                  reading_payload = TRUE;
+                }
+              
+              append_payload_chunk_and_write (current_part, tmp_to_buf + writing_offset, prefix);
+              writing_offset += prefix;
+            }
+
+          if (reading_payload)
+            {
+              g_string_append_c (current_part->operations, (gchar)OSTREE_STATIC_DELTA_OP_SET_READ_SOURCE);
+              _ostree_write_varuint64 (current_part->operations, from_csum_offset);
+              reading_payload = FALSE;
+            }
+
+          g_string_append_c (current_part->operations, (gchar)OSTREE_STATIC_DELTA_OP_WRITE);
+          _ostree_write_varuint64 (current_part->operations, offset);
+          _ostree_write_varuint64 (current_part->operations, from_start);
+          writing_offset += offset;
+        }
+      
+      { guint64 remainder = tmp_to_len - to_start;
+        if (remainder > 0)
+          append_payload_chunk_and_write (current_part, tmp_to_buf + writing_offset, remainder);
+        writing_offset += remainder;
       }
+
+      g_assert_cmpint (writing_offset, ==, content_size);
+    }
+
 
     g_string_append_c (current_part->operations, (gchar)OSTREE_STATIC_DELTA_OP_CLOSE);
   }
@@ -852,12 +787,44 @@ generate_delta_lowlatency (OstreeRepo                       *repo,
         continue;
 
       g_hash_table_insert (rollsum_optimized_content_objects, g_strdup (to_checksum), rollsum);
-      builder->rollsum_size += rollsum->match_size;
+      builder->rollsum_size += rollsum->matches->match_size;
     }
 
   g_printerr ("rollsum for %u/%u modified\n",
               g_hash_table_size (rollsum_optimized_content_objects),
               g_hash_table_size (modified_content_objects));
+
+  current_part = allocate_part (builder);
+
+  /* Pack the metadata first */
+  g_hash_table_iter_init (&hashiter, new_reachable_metadata);
+  while (g_hash_table_iter_next (&hashiter, &key, &value))
+    {
+      GVariant *serialized_key = key;
+      const char *checksum;
+      OstreeObjectType objtype;
+
+      ostree_object_name_deserialize (serialized_key, &checksum, &objtype);
+
+      if (!process_one_object (repo, builder, &current_part,
+                               checksum, objtype,
+                               cancellable, error))
+        goto out;
+    }
+
+  /* Now do rollsummed objects */
+
+  g_hash_table_iter_init (&hashiter, rollsum_optimized_content_objects);
+  while (g_hash_table_iter_next (&hashiter, &key, &value))
+    {
+      const char *checksum = key;
+      ContentRollsum *rollsum = value;
+
+      if (!process_one_rollsum (repo, builder, &current_part,
+                               checksum, rollsum,
+                               cancellable, error))
+        goto out;
+    }
 
   /* Scan for large objects, so we can fall back to plain HTTP-based
    * fetch.
@@ -895,25 +862,7 @@ generate_delta_lowlatency (OstreeRepo                       *repo,
         }
     }
 
-  current_part = allocate_part (builder);
-
-  /* Pack the metadata first */
-  g_hash_table_iter_init (&hashiter, new_reachable_metadata);
-  while (g_hash_table_iter_next (&hashiter, &key, &value))
-    {
-      GVariant *serialized_key = key;
-      const char *checksum;
-      OstreeObjectType objtype;
-
-      ostree_object_name_deserialize (serialized_key, &checksum, &objtype);
-
-      if (!process_one_object (repo, builder, &current_part,
-                               checksum, objtype,
-                               cancellable, error))
-        goto out;
-    }
-
-  /* Now content */
+  /* Now non-rollsummed content */
   g_hash_table_iter_init (&hashiter, new_reachable_content);
   while (g_hash_table_iter_next (&hashiter, &key, &value))
     {

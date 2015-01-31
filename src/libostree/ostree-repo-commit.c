@@ -475,6 +475,7 @@ _ostree_repo_open_trusted_content_bare (OstreeRepo          *self,
 
   if (!_ostree_repo_has_loose_object (self, checksum, OSTREE_OBJECT_TYPE_FILE,
                                       &have_obj, loose_objpath,
+                                      NULL,
                                       cancellable, error))
     goto out;
 
@@ -520,7 +521,7 @@ _ostree_repo_commit_trusted_content_bare (OstreeRepo          *self,
     {
       _ostree_loose_path (loose_objpath, checksum, OSTREE_OBJECT_TYPE_FILE, self->mode);
       
-      if (!commit_loose_object_trusted (self, OSTREE_OBJECT_TYPE_FILE,
+      if (!commit_loose_object_trusted (self, checksum, OSTREE_OBJECT_TYPE_FILE,
                                         loose_objpath,
                                         state->temp_filename,
                                         FALSE, uid, gid, mode,
@@ -776,7 +777,8 @@ write_object (OstreeRepo         *self,
       if (temp_out)
         fd = g_file_descriptor_based_get_fd ((GFileDescriptorBased*)temp_out);
       
-      if (!commit_loose_object_trusted (self, objtype, loose_objpath,
+      if (!commit_loose_object_trusted (self, actual_checksum, objtype,
+                                        loose_objpath,
                                         temp_filename,
                                         object_is_symlink,
                                         uid, gid, mode,
