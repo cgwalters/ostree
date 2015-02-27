@@ -832,6 +832,9 @@ process_one_bsdiff (OstreeRepo                       *repo,
       payload = g_memory_output_stream_get_data (G_MEMORY_OUTPUT_STREAM (out));
       payload_size = g_memory_output_stream_get_data_size (G_MEMORY_OUTPUT_STREAM (out));
 
+      g_printerr ("bsdiff for %s content=%" G_GUINT64_FORMAT " payload=%" G_GUINT64_FORMAT " reduction=%u%%\n",
+                  to_checksum, content_size, payload_size, (guint)(((double)payload_size)/content_size)*100);
+
       g_string_append_c (current_part->operations, (gchar)OSTREE_STATIC_DELTA_OP_BSPATCH);
       _ostree_write_varuint64 (current_part->operations, current_part->payload->len);
       _ostree_write_varuint64 (current_part->operations, payload_size);
