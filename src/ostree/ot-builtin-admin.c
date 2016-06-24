@@ -37,6 +37,7 @@ typedef struct {
 } OstreeAdminCommand;
 
 static OstreeAdminCommand admin_subcommands[] = {
+  { "apply-live", ot_admin_builtin_apply_live },
   { "cleanup", ot_admin_builtin_cleanup },
   { "config-diff", ot_admin_builtin_diff },
   { "deploy", ot_admin_builtin_deploy }, 

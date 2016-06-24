@@ -174,6 +174,7 @@ _OSTREE_PUBLIC
 gboolean ostree_sysroot_deployment_live_replace (OstreeSysroot     *self,
                                                  OstreeDeployment  *src_deployment,
                                                  OstreeDeployment  *target_deployment,
+                                                 GVariant         **out_stats,
                                                  GCancellable      *cancellable,
                                                  GError           **error);
 

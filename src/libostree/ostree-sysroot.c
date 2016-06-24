@@ -1600,16 +1600,27 @@ ostree_sysroot_simple_write_deployment (OstreeSysroot      *sysroot,
   return ret;
 }
 
+typedef enum {
+  CLONE_DEPLOYMENT_FLAGS_NONE,
+  CLONE_DEPLOYMENT_FLAGS_NO_GC
+} CloneDeploymentFlags;
+
 static gboolean
 clone_deployment (OstreeSysroot  *sysroot,
                   OstreeDeployment *target_deployment,
                   OstreeDeployment *merge_deployment,
+                  CloneDeploymentFlags flags,
                   GCancellable *cancellable,
                   GError **error)
 {
   gboolean ret = FALSE;
   __attribute__((cleanup(_ostree_kernel_args_cleanup))) OstreeKernelArgs *kargs = NULL;
   glnx_unref_object OstreeDeployment *new_deployment = NULL;
+  OstreeSysrootSimpleWriteDeploymentFlags write_flags =
+    OSTREE_SYSROOT_SIMPLE_WRITE_DEPLOYMENT_FLAGS_NOT_DEFAULT;
+
+  if ((flags & CLONE_DEPLOYMENT_FLAGS_NO_GC) > 0)
+    write_flags |= OSTREE_SYSROOT_SIMPLE_WRITE_DEPLOYMENT_FLAGS_RETAIN;
 
   /* Ensure we have a clean slate */
   if (!ostree_sysroot_prepare_cleanup (sysroot, cancellable, error))
@@ -1645,7 +1656,7 @@ clone_deployment (OstreeSysroot  *sysroot,
    */
   if (!ostree_sysroot_simple_write_deployment (sysroot, ostree_deployment_get_osname (target_deployment),
                                                new_deployment, merge_deployment,
-                                               OSTREE_SYSROOT_SIMPLE_WRITE_DEPLOYMENT_FLAGS_NOT_DEFAULT,
+                                               write_flags,
                                                cancellable, error))
     goto out;
   
@@ -1710,7 +1721,9 @@ ostree_sysroot_deployment_unlock (OstreeSysroot     *self,
   /* For hotfixes, we push a rollback target */
   if (unlocked_state == OSTREE_DEPLOYMENT_UNLOCKED_HOTFIX)
     {
-      if (!clone_deployment (self, deployment, merge_deployment, cancellable, error))
+      if (!clone_deployment (self, deployment, merge_deployment,
+                             CLONE_DEPLOYMENT_FLAGS_NONE,
+                             cancellable, error))
         goto out;
     }
 
@@ -1864,6 +1877,7 @@ dir_replace_recurse (int src_dfd,
                      const char *src_path,
                      int target_dfd,
                      const char *target_path,
+                     guint      *n_replaced,
                      GCancellable *cancellable,
                      GError **error)
 {
@@ -1879,6 +1893,7 @@ dir_replace_recurse (int src_dfd,
   while (TRUE)
     {
       struct dirent *dent;
+      struct stat src_stbuf;
       struct stat target_stbuf;
       gboolean exists;
 
@@ -1886,6 +1901,12 @@ dir_replace_recurse (int src_dfd,
         return FALSE;
       if (dent == NULL)
         break;
+
+      if (fstatat (src_dfd_iter.fd, dent->d_name, &src_stbuf, AT_SYMLINK_NOFOLLOW) < 0)
+        {
+          glnx_set_error_from_errno (error);
+          return FALSE;
+        }
 
       if (fstatat (target_dfd_iter.fd, dent->d_name, &target_stbuf, AT_SYMLINK_NOFOLLOW) < 0)
         {
@@ -1898,6 +1919,12 @@ dir_replace_recurse (int src_dfd,
         }
       else
         exists = TRUE;
+
+      /* Are they already the same? */
+      if (exists &&
+          src_stbuf.st_dev == target_stbuf.st_dev
+          && src_stbuf.st_ino == target_stbuf.st_ino)
+        continue;
 
       /* If we're replacing a directory with something else, blow it
        * away.  One thing we could consider doing instead is creating
@@ -1929,6 +1956,8 @@ dir_replace_recurse (int src_dfd,
                                                     cancellable, error))
             return FALSE;
         }
+
+      (*n_replaced)++;
 
       switch (dent->d_type)
         {
@@ -1975,15 +2004,12 @@ dir_replace_recurse (int src_dfd,
       if (dent == NULL)
         break;
 
-      if (fstatat (src_dfd_iter.fd, dent->d_name, &src_stbuf, AT_SYMLINK_NOFOLLOW) < 0)
+      if (fstatat (src_dfd_iter.fd, dent->d_name, &src_stbuf, AT_SYMLINK_NOFOLLOW) == 0)
+        continue;
+      if (errno != ENOENT)
         {
-          if (errno == ENOENT)
-            continue;
-          else
-            {
-              glnx_set_error_from_errno (error);
-              return FALSE;
-            }
+          glnx_set_error_from_errno (error);
+          return FALSE;
         }
 
       switch (dent->d_type)
@@ -2040,13 +2066,15 @@ ostree_sysroot_deployment_live_replace (OstreeSysroot     *self,
   g_autofree char *src_deployment_path = NULL;
   g_autofree char *target_deployment_path = NULL;
 
-  /* First, push a rollback target.  Note that this actually still
+  /* First, push a rollback target, but obviously we still need the *new*
+   * deployment, so we don't GC.  Note that this actually still
    * works even if we live-edit multiple times, because we re-deploy
    * based on the checksum.  Note this means we would need to be
    * careful introducing any future optimization that allowed reuse of
-   * deployment directories with the same checksum.
    */
-  if (!clone_deployment (self, target_deployment, target_deployment, cancellable, error))
+  if (!clone_deployment (self, target_deployment, target_deployment,
+                         CLONE_DEPLOYMENT_FLAGS_NO_GC,
+                         cancellable, error))
     goto out;
 
   /* Crack it open */
