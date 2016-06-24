@@ -171,6 +171,13 @@ gboolean ostree_sysroot_deployment_unlock (OstreeSysroot     *self,
                                            GError           **error);
 
 _OSTREE_PUBLIC
+gboolean ostree_sysroot_deployment_live_replace (OstreeSysroot     *self,
+                                                 OstreeDeployment  *src_deployment,
+                                                 OstreeDeployment  *target_deployment,
+                                                 GCancellable      *cancellable,
+                                                 GError           **error);
+
+_OSTREE_PUBLIC
 OstreeDeployment *ostree_sysroot_get_merge_deployment (OstreeSysroot     *self,
                                                        const char        *osname);
 

@@ -1858,3 +1858,219 @@ ostree_sysroot_deployment_unlock (OstreeSysroot     *self,
  out:
   return ret;
 }
+
+static gboolean
+dir_replace_recurse (int src_dfd,
+                     const char *src_path,
+                     int target_dfd,
+                     const char *target_path,
+                     GCancellable *cancellable,
+                     GError **error)
+{
+  g_auto(GLnxDirFdIterator) src_dfd_iter = { 0, };
+  g_auto(GLnxDirFdIterator) target_dfd_iter = { 0, };
+
+  if (!glnx_dirfd_iterator_init_at (src_dfd, src_path, FALSE, &src_dfd_iter, error))
+    return FALSE;
+  if (!glnx_dirfd_iterator_init_at (target_dfd, target_path, FALSE, &target_dfd_iter, error))
+    return FALSE;
+
+  /* Copy from source to target */
+  while (TRUE)
+    {
+      struct dirent *dent;
+      struct stat target_stbuf;
+      gboolean exists;
+
+      if (!glnx_dirfd_iterator_next_dent_ensure_dtype (&src_dfd_iter, &dent, cancellable, error))
+        return FALSE;
+      if (dent == NULL)
+        break;
+
+      if (fstatat (target_dfd_iter.fd, dent->d_name, &target_stbuf, AT_SYMLINK_NOFOLLOW) < 0)
+        {
+          if (errno != ENOENT)
+            {
+              glnx_set_error_from_errno (error);
+              return FALSE;
+            }
+          exists = FALSE;
+        }
+      else
+        exists = TRUE;
+
+      /* If we're replacing a directory with something else, blow it
+       * away.  One thing we could consider doing instead is creating
+       * all of the new content, then doing rename()s after.
+       * Particularly with renameat2() this would be nicer.
+       */
+      if (exists && dent->d_type != DT_DIR && S_ISDIR (target_stbuf.st_mode))
+        {
+          if (!glnx_shutil_rm_rf_at (target_dfd_iter.fd, dent->d_name, cancellable, error))
+            return FALSE;
+          exists = FALSE;
+        }
+      if (!exists && dent->d_type == DT_DIR)
+        {
+          glnx_fd_close int src_child_dfd = -1;
+          glnx_fd_close int target_child_dfd = -1;
+          if (mkdirat (target_dfd_iter.fd, dent->d_name, 0700) < 0)
+            {
+              glnx_set_error_from_errno (error);
+              return FALSE;
+            }
+          if (!glnx_opendirat (src_dfd_iter.fd, dent->d_name, FALSE,
+                               &src_child_dfd, error))
+            return FALSE;
+          if (!glnx_opendirat (target_dfd_iter.fd, dent->d_name, FALSE,
+                               &target_child_dfd, error))
+            return FALSE;
+          if (!ot_dirfd_copy_attributes_and_xattrs (src_child_dfd, target_child_dfd,
+                                                    cancellable, error))
+            return FALSE;
+        }
+
+      switch (dent->d_type)
+        {
+        case DT_DIR:
+          {
+            if (!dir_replace_recurse (src_dfd_iter.fd, dent->d_name,
+                                      target_dfd_iter.fd, dent->d_name,
+                                      cancellable, error))
+              return FALSE;
+            break;
+          }
+        case DT_REG:
+          /* Ordinarily in ostree we create copies of symlinks since
+           * it's really easy to run into hardlink limits.  But here
+           * we know we're hard linking to a *copy* of a symlink,
+           * which is a nicely bounded operation.  So let's just try
+           * it.
+           */
+        case DT_LNK:
+          (void) unlinkat (target_dfd_iter.fd, dent->d_name, 0);
+          if (linkat (src_dfd_iter.fd, dent->d_name,
+                      target_dfd_iter.fd, dent->d_name, 0) < 0)
+            {
+              glnx_set_prefix_error_from_errno (error, "%s", "linkat");
+              return FALSE;
+            }
+          break;
+        default:
+          g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                       "Unhandled file type for %s", dent->d_name);
+          return FALSE;
+        }
+      
+    }
+
+  /* Remove files from target that are not in source */
+  while (TRUE)
+    {
+      struct dirent *dent;
+      struct stat src_stbuf;
+
+      if (!glnx_dirfd_iterator_next_dent_ensure_dtype (&target_dfd_iter, &dent, cancellable, error))
+        return FALSE;
+      if (dent == NULL)
+        break;
+
+      if (fstatat (src_dfd_iter.fd, dent->d_name, &src_stbuf, AT_SYMLINK_NOFOLLOW) < 0)
+        {
+          if (errno == ENOENT)
+            continue;
+          else
+            {
+              glnx_set_error_from_errno (error);
+              return FALSE;
+            }
+        }
+
+      switch (dent->d_type)
+        {
+        case DT_DIR:
+          {
+            if (!glnx_shutil_rm_rf_at (target_dfd_iter.fd, dent->d_name,
+                                       cancellable, error))
+              return FALSE;
+            break;
+          }
+        case DT_REG:
+        case DT_LNK:
+          if (unlinkat (target_dfd_iter.fd, dent->d_name, 0) < 0)
+            {
+              glnx_set_error_from_errno (error);
+              return FALSE;
+            }
+          break;
+        default:
+          g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                       "Unhandled file type for %s", dent->d_name);
+          return FALSE;
+        }
+    }
+  return TRUE;
+}
+
+/**
+ * ostree_sysroot_deployment_live_replace:
+ * @self: Sysroot
+ * @src_deployment: Deployment to use as source
+ * @target_deployment: Current deployment
+ * @cancellable: Cancellable
+ * @error: Error
+ *
+ * Push a clone of the current deployment as a rollback target, then
+ * live-merge all filesystem-level changes from @src_deployment to
+ * @target_deployment.
+ */
+gboolean
+ostree_sysroot_deployment_live_replace (OstreeSysroot     *self,
+                                        OstreeDeployment  *src_deployment,
+                                        OstreeDeployment  *target_deployment,
+                                        GCancellable      *cancellable,
+                                        GError           **error)
+{
+  gboolean ret = FALSE;
+  glnx_unref_object OstreeDeployment *deployment_clone =
+    ostree_deployment_clone (target_deployment);
+  glnx_unref_object OstreeDeployment *merge_deployment = NULL;
+  GKeyFile *origin_clone = ostree_deployment_get_origin (deployment_clone);
+  const char *src_csum = ostree_deployment_get_csum (src_deployment);
+  g_autofree char *src_deployment_path = NULL;
+  g_autofree char *target_deployment_path = NULL;
+
+  /* First, push a rollback target.  Note that this actually still
+   * works even if we live-edit multiple times, because we re-deploy
+   * based on the checksum.  Note this means we would need to be
+   * careful introducing any future optimization that allowed reuse of
+   * deployment directories with the same checksum.
+   */
+  if (!clone_deployment (self, target_deployment, target_deployment, cancellable, error))
+    goto out;
+
+  /* Crack it open */
+  if (!ostree_sysroot_deployment_set_mutable (self, target_deployment, TRUE,
+                                              cancellable, error))
+    goto out;
+
+  src_deployment_path = ostree_sysroot_get_deployment_dirpath (self, src_deployment);
+  target_deployment_path = ostree_sysroot_get_deployment_dirpath (self, target_deployment);
+
+  if (!dir_replace_recurse (self->sysroot_fd, src_deployment_path,
+                            self->sysroot_fd, target_deployment_path,
+                            cancellable, error))
+    goto out;
+
+  g_key_file_set_string (origin_clone, "origin", "live-replaced", src_csum);
+  if (!ostree_sysroot_write_origin_file (self, target_deployment, origin_clone,
+                                         cancellable, error))
+    goto out;
+
+  if (!_ostree_sysroot_bump_mtime (self, error))
+    goto out;
+
+  ret = TRUE;
+ out:
+  return ret;
+}

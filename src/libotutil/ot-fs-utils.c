@@ -251,3 +251,44 @@ ot_file_mapat_bytes (int dfd,
 
   return g_mapped_file_get_bytes (mfile);
 }
+
+gboolean
+ot_dirfd_copy_attributes_and_xattrs (int            src_dfd,
+                                     int            dest_dfd,
+                                     GCancellable  *cancellable,
+                                     GError       **error)
+{
+  gboolean ret = FALSE;
+  struct stat src_stbuf;
+  g_autoptr(GVariant) xattrs = NULL;
+
+  /* Clone all xattrs first, so we get the SELinux security context
+   * right.  This will allow other users access if they have ACLs, but
+   * oh well.
+   */ 
+  if (!glnx_fd_get_all_xattrs (src_dfd, &xattrs, cancellable, error))
+    goto out;
+  if (!glnx_fd_set_all_xattrs (dest_dfd, xattrs,
+                               cancellable, error))
+    goto out;
+
+  if (fstat (src_dfd, &src_stbuf) != 0)
+    {
+      glnx_set_error_from_errno (error);
+      goto out;
+    }
+  if (fchown (dest_dfd, src_stbuf.st_uid, src_stbuf.st_gid) != 0)
+    {
+      glnx_set_error_from_errno (error);
+      goto out;
+    }
+  if (fchmod (dest_dfd, src_stbuf.st_mode) != 0)
+    {
+      glnx_set_error_from_errno (error);
+      goto out;
+    }
+
+  ret = TRUE;
+ out:
+  return ret;
+}

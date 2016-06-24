@@ -70,4 +70,10 @@ GBytes *ot_file_mapat_bytes (int dfd,
                              const char *path,
                              GError **error);
 
+gboolean
+ot_dirfd_copy_attributes_and_xattrs (int            src_dfd,
+                                     int            dest_dfd,
+                                     GCancellable  *cancellable,
+                                     GError       **error);
+
 G_END_DECLS

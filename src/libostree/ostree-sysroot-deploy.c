@@ -121,50 +121,6 @@ hardlink_or_copy_at (int         src_dfd,
 }
 
 static gboolean
-dirfd_copy_attributes_and_xattrs (int            src_parent_dfd,
-                                  const char    *src_name,
-                                  int            src_dfd,
-                                  int            dest_dfd,
-                                  GCancellable  *cancellable,
-                                  GError       **error)
-{
-  gboolean ret = FALSE;
-  struct stat src_stbuf;
-  g_autoptr(GVariant) xattrs = NULL;
-
-  /* Clone all xattrs first, so we get the SELinux security context
-   * right.  This will allow other users access if they have ACLs, but
-   * oh well.
-   */ 
-  if (!glnx_dfd_name_get_all_xattrs (src_parent_dfd, src_name,
-                                       &xattrs, cancellable, error))
-    goto out;
-  if (!glnx_fd_set_all_xattrs (dest_dfd, xattrs,
-                             cancellable, error))
-    goto out;
-
-  if (fstat (src_dfd, &src_stbuf) != 0)
-    {
-      glnx_set_error_from_errno (error);
-      goto out;
-    }
-  if (fchown (dest_dfd, src_stbuf.st_uid, src_stbuf.st_gid) != 0)
-    {
-      glnx_set_error_from_errno (error);
-      goto out;
-    }
-  if (fchmod (dest_dfd, src_stbuf.st_mode) != 0)
-    {
-      glnx_set_error_from_errno (error);
-      goto out;
-    }
-
-  ret = TRUE;
- out:
-  return ret;
-}
-
-static gboolean
 copy_dir_recurse (int              src_parent_dfd,
                   int              dest_parent_dfd,
                   const char      *name,
@@ -190,8 +146,8 @@ copy_dir_recurse (int              src_parent_dfd,
   if (!ot_gopendirat (dest_parent_dfd, name, TRUE, &dest_dfd, error))
     goto out;
 
-  if (!dirfd_copy_attributes_and_xattrs (src_parent_dfd, name, src_dfd, dest_dfd,
-                                         cancellable, error))
+  if (!ot_dirfd_copy_attributes_and_xattrs (src_dfd, dest_dfd,
+                                            cancellable, error))
     goto out;
  
   srcd = fdopendir (src_dfd);
@@ -300,8 +256,7 @@ ensure_directory_from_template (int                 orig_etc_fd,
   if (!ot_gopendirat (new_etc_fd, path, TRUE, &target_dfd, error))
     goto out;
 
-  if (!dirfd_copy_attributes_and_xattrs (modified_etc_fd, path, src_dfd, target_dfd,
-                                         cancellable, error))
+  if (!ot_dirfd_copy_attributes_and_xattrs (src_dfd, target_dfd, cancellable, error))
     goto out;
 
   ret = TRUE;
