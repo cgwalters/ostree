@@ -166,6 +166,23 @@ AS_IF([test "$enable_man" != no], [
 ])
 AM_CONDITIONAL(ENABLE_MAN, test "$enable_man" != no)
 
+AC_ARG_ENABLE(rust,
+  [AS_HELP_STRING([--enable-rust],
+  [Compile Rust code instead of C [default=no]])],,
+   enable_rust=no)
+
+  AS_IF([test "$enable_man" != no], [
+    AC_PATH_PROG([XSLTPROC], [xsltproc])
+    AS_IF([test -z "$XSLTPROC"], [
+      AS_IF([test "$enable_man" = yes], [
+        AC_MSG_ERROR([xsltproc is required for --enable-man])
+      ])
+      enable_rust=no
+  ])
+  enable_rust=yes
+])
+AM_CONDITIONAL(ENABLE_RUST, test "$enable_rust" != no)
+
 AC_ARG_WITH(libarchive,
 	    AS_HELP_STRING([--without-libarchive], [Do not use libarchive]),
 	    :, with_libarchive=maybe)
