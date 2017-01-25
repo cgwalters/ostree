@@ -171,15 +171,9 @@ AC_ARG_ENABLE(rust,
   [Compile Rust code instead of C [default=no]])],,
    enable_rust=no)
 
-  AS_IF([test "$enable_man" != no], [
-    AC_PATH_PROG([XSLTPROC], [xsltproc])
-    AS_IF([test -z "$XSLTPROC"], [
-      AS_IF([test "$enable_man" = yes], [
-        AC_MSG_ERROR([xsltproc is required for --enable-man])
-      ])
-      enable_rust=no
-  ])
-  enable_rust=yes
+AS_IF([test "$enable_rust" = yes], [
+   AC_PATH_PROG([cargo], [cargo])
+   AS_IF([test -z "$cargo"], [AC_MSG_ERROR([cargo is required for --enable-rust])
 ])
 AM_CONDITIONAL(ENABLE_RUST, test "$enable_rust" != no)
 
