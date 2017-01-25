@@ -21,12 +21,15 @@ include Makefile-libostree-defines.am
 
 noinst_LTLIBRARIES += libostree-kernel-args.la
 
+
 if ENABLE_RUST
-@abs_top_builddir@/target/@RUST_TARGET_SUBDIR@/libbupsplit.a: Makefile rust/bupsplit.rs
+bupsplitpath = @abs_top_builddir@/target/@RUST_TARGET_SUBDIR@/libbupsplit.a
+$(bupsplitpath): Makefile rust/bupsplit.rs
 	cd $(top_srcdir)/rust && \
 	  CARGO_TARGET_DIR=@abs_top_builddir@/target cargo build --verbose $(CARGO_RELEASE_ARGS)
 else
-noinst_LTLIBRARIES += libbupsplit.la
+bupsplitpath = libbupsplit.la
+noinst_LTLIBRARIES += $(bupsplitpath)
 libbupsplit_la_SOURCES = src/libostree/bupsplit.h src/libostree/bupsplit.c
 endif # ENABLE_RUST
 
@@ -147,11 +150,7 @@ libostree_1_la_CFLAGS = $(AM_CFLAGS) -I$(srcdir)/bsdiff -I$(srcdir)/libglnx -I$(
 	-fvisibility=hidden '-D_OSTREE_PUBLIC=__attribute__((visibility("default"))) extern'
 libostree_1_la_LDFLAGS = -version-number 1:0:0 -Bsymbolic-functions -Wl,--version-script=$(top_srcdir)/src/libostree/libostree.sym
 libostree_1_la_LIBADD = libotutil.la libglnx.la libbsdiff.la libostree-kernel-args.la $(OT_INTERNAL_GIO_UNIX_LIBS) $(OT_INTERNAL_GPGME_LIBS) $(OT_DEP_LZMA_LIBS) $(OT_DEP_ZLIB_LIBS)
-if ENABLE_RUST
-libostree_1_la_LIBADD += libbupsplit.a
-else
-libostree_1_la_LIBADD += libbupsplit.la
-endif # ENABLE_RUST
+libostree_1_la_LIBADD += $(bupsplitpath)
 EXTRA_libostree_1_la_DEPENDENCIES = $(top_srcdir)/src/libostree/libostree.sym
 
 EXTRA_DIST += src/libostree/libostree.sym

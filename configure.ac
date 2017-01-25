@@ -173,9 +173,9 @@ AC_ARG_ENABLE(rust,
 
 AS_IF([test "$enable_rust" = yes], [
    AC_PATH_PROG([cargo], [cargo])
-   AS_IF([test -z "$cargo"], [AC_MSG_ERROR([cargo is required for --enable-rust])
+   AS_IF([test -z "$cargo"], [AC_MSG_ERROR([cargo is required for --enable-rust])])
    AC_PATH_PROG([rustc], [rustc])
-   AS_IF([test -z "$rustc"], [AC_MSG_ERROR([rustc is required for --enable-rust])
+   AS_IF([test -z "$rustc"], [AC_MSG_ERROR([rustc is required for --enable-rust])])
 
    dnl These bits based on gnome:librsvg/configure.ac
 
@@ -184,19 +184,18 @@ AS_IF([test "$enable_rust" = yes], [
       AC_HELP_STRING([--enable-rust-debug],
        [Build Rust code with debugging information [default=no]]),
        [rust_debug_release=$enableval],
-       [rust_debug_release=no])
+       [rust_debug_release=release])
 
    AC_MSG_CHECKING(whether to build Rust code with debugging information)
    if test "x$rust_debug_release" = "xyes" ; then
+      rust_debug_release=debug
       AC_MSG_RESULT(yes)
-      RUST_TARGET_SUBDIR=debug
    else
       AC_MSG_RESULT(no)
-      RUST_TARGET_SUBDIR=release
    fi
-   AM_CONDITIONAL([RUST_DEBUG], [test "x$rust_debug_release" = "xyes"])
-
-A
+   RUST_TARGET_SUBDIR=${rust_debug_release}
+   AC_SUBST([RUST_TARGET_SUBDIR])
+   AM_CONDITIONAL([RUST_DEBUG], [test "x$rust_debug_release" = "xdebug"])
 ])
 AM_CONDITIONAL(ENABLE_RUST, test "$enable_rust" != no)
 

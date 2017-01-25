@@ -1,0 +1,11 @@
+[package]
+name = "bupsplit"
+version = "0.0.1"
+authors = ["Colin Walters <walters@verbum.org>"]
+
+[dependencies]
+libc = "0.2"
+
+[lib]
+name = "bupsplit"
+crate-type = ["staticlib"]
