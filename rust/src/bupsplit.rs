@@ -32,7 +32,6 @@
 
 extern crate libc;
 
-use libc::{int, uint32_t, size_t};
 use std::slice;
 
 // According to librsync/rollsum.h:
@@ -46,12 +45,12 @@ const ROLLSUM_CHAR_OFFSET: u32 = 31;
 const BUP_BLOBBITS: u32= 13;
 const BUP_BLOBSIZE: u32 = (1<<BUP_BLOBBITS);
 const BUP_WINDOWBITS: u32 = 7;
-const BUP_WINDOWSIZE: usize = (1<<(BUP_WINDOWBITS-1));
+const BUP_WINDOWSIZE: u32 = (1<<(BUP_WINDOWBITS-1));
 
 struct Rollsum {
     s1: u32,
     s2: u32,
-    window: [u32; BUP_WINDOWSIZE],
+    window: [u8; BUP_WINDOWSIZE as usize],
     wofs: i32,
 }
 
@@ -59,28 +58,32 @@ impl Rollsum {
     pub fn new() -> Rollsum {
         Rollsum { s1: BUP_WINDOWSIZE * ROLLSUM_CHAR_OFFSET,
                   s2: BUP_WINDOWSIZE * (BUP_WINDOWSIZE-1) * ROLLSUM_CHAR_OFFSET,
+                  window: [0; 64],
+                  wofs: 0
         }
     }
 
     // These formulas are based on rollsum.h in the librsync project.
     pub fn add(&mut self, drop: u8, add: u8) -> () {
-        self.s1 += add - drop;
-        self.s2 += self.s1 - (BUP_WINDOWSIZE * (drop + ROLLSUM_CHAR_OFFSET));
+        self.s1 += (add - drop) as u32;
+        self.s2 += self.s1 - (BUP_WINDOWSIZE * (drop as u32 + ROLLSUM_CHAR_OFFSET));
     }
 
     pub fn roll(&mut self, ch: u8) -> () {
-        r.add(r.window[r.wofs], ch);
-        r.window[r.wofs] = ch;
-        r.wofs = r.wofs + 1 % BUP_WINDOWSIZE;
+        let wofs = self.wofs as usize;
+        let dval = self.window[wofs];
+        self.add(dval, ch);
+        self.window[wofs] = ch;
+        self.wofs = self.wofs + (1 % BUP_WINDOWSIZE) as i32;
     }
 
     pub fn digest(&self) -> u32 {
-        (r.s1 << 16) | (r.s2 & 0xFFFF);
+        (self.s1 << 16) | (self.s2 & 0xFFFF)
     }
 }
 
 #[no_mangle]
-fn bupsplit_sum(buf: *const uint32_t, ofs: size_t, len: size_t) -> u32 {
+pub extern fn bupsplit_sum(buf: *const u8, ofs: libc::size_t, len: libc::size_t) -> u32 {
     let sbuf = unsafe {
         assert!(!buf.is_null());
         slice::from_raw_parts(buf.offset(ofs as isize), len as usize)
@@ -88,17 +91,16 @@ fn bupsplit_sum(buf: *const uint32_t, ofs: size_t, len: size_t) -> u32 {
 
     let mut r = Rollsum::new();
     for x in sbuf {
-        r.roll(x);
+        r.roll(*x);
     }
-    r.digest();
+    r.digest()
 }
 
 #[no_mangle]
-pub extern fn bupsplit_find_ofs(buf: *const uint32_t, len: size_t,
-                                bits: *libc::int)
+pub extern fn bupsplit_find_ofs(buf: *const u8, len: libc::size_t,
+                                bits: *mut libc::c_int) -> libc::c_int
 {
     let mut r = Rollsum::new();
-    int count;
 
     let sbuf = unsafe {
         assert!(!buf.is_null());
@@ -106,21 +108,21 @@ pub extern fn bupsplit_find_ofs(buf: *const uint32_t, len: size_t,
     };
 
     for x in sbuf {
-        r.roll(x);
+        r.roll(*x);
     }
-	  if ((r.s2 & (BUP_BLOBSIZE-1)) == ((~0) & (BUP_BLOBSIZE-1))) {
-	      if (!bits.is_null()) {
-            let sum = r.digest() >> BUP_BLOBBITS;
-            let rbits = BUP_BLOBBITS;
-            while (rsum & 1) {
-                rsum = rsum >> 1;
+	  if (r.s2 & (BUP_BLOBSIZE-1)) == ((u32::max_value()) & (BUP_BLOBSIZE-1)) {
+	      if !bits.is_null() {
+            let mut sum = r.digest() >> BUP_BLOBBITS;
+            let mut rbits : libc::c_int = BUP_BLOBBITS as i32;
+            while sum & 1 != 0 {
+                sum = sum >> 1;
                 rbits = rbits + 1;
             }
             unsafe {
                 *bits = rbits;
             }
         }
-        len + 1
+        len as i32 + 1
     } else {
         0
     }
