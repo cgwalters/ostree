@@ -7,5 +7,6 @@ authors = ["Colin Walters <walters@verbum.org>"]
 libc = "0.2"
 
 [lib]
-name = "bupsplit"
+name = "bupsplit_rs"
+path = "src/bupsplit.rs"
 crate-type = ["staticlib"]
