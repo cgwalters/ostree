@@ -169,11 +169,34 @@ AM_CONDITIONAL(ENABLE_MAN, test "$enable_man" != no)
 AC_ARG_ENABLE(rust,
   [AS_HELP_STRING([--enable-rust],
   [Compile Rust code instead of C [default=no]])],,
-   enable_rust=no)
+   [enable_rust=no; rust_debug_release=no])
 
 AS_IF([test "$enable_rust" = yes], [
    AC_PATH_PROG([cargo], [cargo])
    AS_IF([test -z "$cargo"], [AC_MSG_ERROR([cargo is required for --enable-rust])
+   AC_PATH_PROG([rustc], [rustc])
+   AS_IF([test -z "$rustc"], [AC_MSG_ERROR([rustc is required for --enable-rust])
+
+   dnl These bits based on gnome:librsvg/configure.ac
+
+   dnl By default, we build in public release mode.
+   AC_ARG_ENABLE(rust-debug,
+      AC_HELP_STRING([--enable-rust-debug],
+       [Build Rust code with debugging information [default=no]]),
+       [rust_debug_release=$enableval],
+       [rust_debug_release=no])
+
+   AC_MSG_CHECKING(whether to build Rust code with debugging information)
+   if test "x$rust_debug_release" = "xyes" ; then
+      AC_MSG_RESULT(yes)
+      RUST_TARGET_SUBDIR=debug
+   else
+      AC_MSG_RESULT(no)
+      RUST_TARGET_SUBDIR=release
+   fi
+   AM_CONDITIONAL([RUST_DEBUG], [test "x$rust_debug_release" = "xyes"])
+
+A
 ])
 AM_CONDITIONAL(ENABLE_RUST, test "$enable_rust" != no)
 
@@ -350,6 +373,7 @@ echo "
 
 
     introspection:                                $found_introspection
+    Rust (internal oxidation):                    $rust_debug_release
     rofiles-fuse:                                 $enable_rofiles_fuse
     libsoup (retrieve remote HTTP repositories):  $with_soup
     libsoup TLS client certs:                     $have_libsoup_client_certs

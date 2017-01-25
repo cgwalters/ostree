@@ -79,9 +79,15 @@ impl Rollsum {
     }
 }
 
-fn rollsum_sum(buf: &[u8]) -> u32 {
+#[no_mangle]
+fn bupsplit_sum(buf: *const uint32_t, ofs: size_t, len: size_t) -> u32 {
+    let sbuf = unsafe {
+        assert!(!buf.is_null());
+        slice::from_raw_parts(buf.offset(ofs as isize), len as usize)
+    };
+
     let mut r = Rollsum::new();
-    for x in buf {
+    for x in sbuf {
         r.roll(x);
     }
     r.digest();
@@ -119,38 +125,3 @@ pub extern fn bupsplit_find_ofs(buf: *const uint32_t, len: size_t,
         0
     }
 }
-
-
-#ifndef BUP_NO_SELFTEST
-#define BUP_SELFTEST_SIZE 100000
-
-int bupsplit_selftest()
-{
-    uint8_t *buf = malloc(BUP_SELFTEST_SIZE);
-    uint32_t sum1a, sum1b, sum2a, sum2b, sum3a, sum3b;
-    unsigned count;
-    
-    srandom(1);
-    for (count = 0; count < BUP_SELFTEST_SIZE; count++)
-	buf[count] = random();
-    
-    sum1a = rollsum_sum(buf, 0, BUP_SELFTEST_SIZE);
-    sum1b = rollsum_sum(buf, 1, BUP_SELFTEST_SIZE);
-    sum2a = rollsum_sum(buf, BUP_SELFTEST_SIZE - BUP_WINDOWSIZE*5/2,
-			BUP_SELFTEST_SIZE - BUP_WINDOWSIZE);
-    sum2b = rollsum_sum(buf, 0, BUP_SELFTEST_SIZE - BUP_WINDOWSIZE);
-    sum3a = rollsum_sum(buf, 0, BUP_WINDOWSIZE+3);
-    sum3b = rollsum_sum(buf, 3, BUP_WINDOWSIZE+3);
-    
-    fprintf(stderr, "sum1a = 0x%08x\n", sum1a);
-    fprintf(stderr, "sum1b = 0x%08x\n", sum1b);
-    fprintf(stderr, "sum2a = 0x%08x\n", sum2a);
-    fprintf(stderr, "sum2b = 0x%08x\n", sum2b);
-    fprintf(stderr, "sum3a = 0x%08x\n", sum3a);
-    fprintf(stderr, "sum3b = 0x%08x\n", sum3b);
-    
-    free(buf);
-    return sum1a!=sum1b || sum2a!=sum2b || sum3a!=sum3b;
-}
-
-#endif // !BUP_NO_SELFTEST

@@ -204,7 +204,12 @@ tests_test_rollsum_cli_LDADD = libbupsplit.la $(TESTS_LDADD) $(OT_DEP_ZLIB_LIBS)
 
 tests_test_rollsum_SOURCES = src/libostree/ostree-rollsum.c tests/test-rollsum.c
 tests_test_rollsum_CFLAGS = $(TESTS_CFLAGS) $(OT_DEP_ZLIB_CFLAGS)
-tests_test_rollsum_LDADD = libbupsplit.la $(TESTS_LDADD) $(OT_DEP_ZLIB_LIBS)
+tests_test_rollsum_LDADD = $(TESTS_LDADD) $(OT_DEP_ZLIB_LIBS)
+if ENABLE_RUST
+tests_test_rollsum_LDADD += libbupsplit.a
+else
+tests_test_rollsum_LDADD += libbupsplit.la
+endif # ENABLE_RUST
 
 tests_test_mutable_tree_CFLAGS = $(TESTS_CFLAGS)
 tests_test_mutable_tree_LDADD = $(TESTS_LDADD)
