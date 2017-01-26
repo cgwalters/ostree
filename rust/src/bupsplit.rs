@@ -65,8 +65,8 @@ impl Rollsum {
 
     // These formulas are based on rollsum.h in the librsync project.
     pub fn add(&mut self, drop: u8, add: u8) -> () {
-        self.s1 += (add - drop) as u32;
-        self.s2 += self.s1 - (BUP_WINDOWSIZE * (drop as u32 + ROLLSUM_CHAR_OFFSET));
+        self.s1 = self.s1.wrapping_add(add.wrapping_sub(drop) as u32);
+        self.s2 = self.s2.wrapping_add(self.s1.wrapping_sub(BUP_WINDOWSIZE * (drop as u32 + ROLLSUM_CHAR_OFFSET)));
     }
 
     pub fn roll(&mut self, ch: u8) -> () {
@@ -74,7 +74,7 @@ impl Rollsum {
         let dval = self.window[wofs];
         self.add(dval, ch);
         self.window[wofs] = ch;
-        self.wofs = self.wofs + (1 % BUP_WINDOWSIZE) as i32;
+        self.wofs = (self.wofs + 1) % (BUP_WINDOWSIZE as i32);
     }
 
     pub fn digest(&self) -> u32 {
@@ -86,7 +86,7 @@ impl Rollsum {
 pub extern fn bupsplit_sum(buf: *const u8, ofs: libc::size_t, len: libc::size_t) -> u32 {
     let sbuf = unsafe {
         assert!(!buf.is_null());
-        slice::from_raw_parts(buf.offset(ofs as isize), len as usize)
+        slice::from_raw_parts(buf.offset(ofs as isize), (len - ofs) as usize)
     };
 
     let mut r = Rollsum::new();
