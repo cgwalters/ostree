@@ -195,9 +195,9 @@ AS_IF([test "$enable_rust" = yes], [
    fi
    RUST_TARGET_SUBDIR=${rust_debug_release}
    AC_SUBST([RUST_TARGET_SUBDIR])
-   AM_CONDITIONAL([RUST_DEBUG], [test "x$rust_debug_release" = "xdebug"])
 ])
-AM_CONDITIONAL(ENABLE_RUST, test "$enable_rust" != no)
+AM_CONDITIONAL(RUST_DEBUG, [test "x$rust_debug_release" = "xdebug"])
+AM_CONDITIONAL(ENABLE_RUST, [test "$enable_rust" != no])
 
 AC_ARG_WITH(libarchive,
 	    AS_HELP_STRING([--without-libarchive], [Do not use libarchive]),
