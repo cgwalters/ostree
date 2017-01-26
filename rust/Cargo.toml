@@ -10,3 +10,4 @@ libc = "0.2"
 name = "bupsplit_rs"
 path = "src/bupsplit.rs"
 crate-type = ["staticlib"]
+panic = "abort"
