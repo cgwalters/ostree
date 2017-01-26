@@ -65,8 +65,10 @@ impl Rollsum {
 
     // These formulas are based on rollsum.h in the librsync project.
     pub fn add(&mut self, drop: u8, add: u8) -> () {
-        self.s1 = self.s1.wrapping_add(add.wrapping_sub(drop) as u32);
-        self.s2 = self.s2.wrapping_add(self.s1.wrapping_sub(BUP_WINDOWSIZE * (drop as u32 + ROLLSUM_CHAR_OFFSET)));
+        let drop_expanded = drop as u32;
+        let add_expanded = add as u32;
+        self.s1 = self.s1.wrapping_add(add_expanded.wrapping_sub(drop_expanded));
+        self.s2 = self.s2.wrapping_add(self.s1.wrapping_sub(BUP_WINDOWSIZE * (drop_expanded + ROLLSUM_CHAR_OFFSET)));
     }
 
     pub fn roll(&mut self, ch: u8) -> () {
