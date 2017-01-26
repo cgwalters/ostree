@@ -102,30 +102,28 @@ pub extern fn bupsplit_sum(buf: *const u8, ofs: libc::size_t, len: libc::size_t)
 pub extern fn bupsplit_find_ofs(buf: *const u8, len: libc::size_t,
                                 bits: *mut libc::c_int) -> libc::c_int
 {
-    let mut r = Rollsum::new();
-
     let sbuf = unsafe {
         assert!(!buf.is_null());
         slice::from_raw_parts(buf, len as usize)
     };
 
+    let mut r = Rollsum::new();
     for x in sbuf {
         r.roll(*x);
-    }
-	  if (r.s2 & (BUP_BLOBSIZE-1)) == ((u32::max_value()) & (BUP_BLOBSIZE-1)) {
-	      if !bits.is_null() {
-            let mut sum = r.digest() >> BUP_BLOBBITS;
-            let mut rbits : libc::c_int = BUP_BLOBBITS as i32;
-            while sum & 1 != 0 {
-                sum = sum >> 1;
-                rbits = rbits + 1;
+	      if (r.s2 & (BUP_BLOBSIZE-1)) == ((u32::max_value()) & (BUP_BLOBSIZE-1)) {
+	          if !bits.is_null() {
+                let mut sum = r.digest() >> BUP_BLOBBITS;
+                let mut rbits : libc::c_int = BUP_BLOBBITS as i32;
+                while sum & 1 != 0 {
+                    sum = sum >> 1;
+                    rbits = rbits + 1;
+                }
+                unsafe {
+                    *bits = rbits;
+                }
             }
-            unsafe {
-                *bits = rbits;
-            }
+            return len as i32
         }
-        len as i32 + 1
-    } else {
-        0
     }
+    0
 }
