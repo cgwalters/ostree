@@ -38,6 +38,27 @@
 #include <sys/xattr.h>
 #include <glib/gprintf.h>
 
+G_DEFINE_TYPE (OstreeRepoTransaction, ostree_repo_transaction, G_TYPE_OBJECT)
+
+static void
+ostree_repo_transaction_finalize (GObject *object)
+{
+  OstreeRepo *self = OSTREE_REPO (object);
+}
+
+static void
+ostree_repo_class_init (OstreeRepoClass *klass)
+{
+  GObjectClass *object_class = G_OBJECT_CLASS (klass);
+
+  object_class->finalize = ostree_repo_transaction_finalize;
+}
+
+static void
+ostree_repo_transaction_init (OstreeRepoTransaction *self)
+{
+}
+
 gboolean
 _ostree_repo_ensure_loose_objdir_at (int             dfd,
                                      const char     *loose_path,
@@ -1062,6 +1083,48 @@ ostree_repo_scan_hardlinks (OstreeRepo    *self,
 }
 
 /**
+ * ostree_repo_setup_transaction:
+ * @self: An #OstreeRepo
+ * @taskid: (allow-none): Reusable identifier for this transaction
+ * @expected_size: Size in bytes of estimated required space; use zero to ignore
+ * @out_cleanup: (out caller-allocates) (optional): May be used with autocleanups to abort transaction
+ * @error: Error
+ *
+ * Replacement API for `ostree_repo_prepare_transaction()`.  If
+ * provided, the @taskid parameter can be used to more easily support
+ * resuming existing transactions.  A common use is to provide
+ * a refspec; for example, `ostree_repo_pull_with_options()` when
+ * pulling only a single refspec, will pass that refspec as @taskid.
+ * If it is mirroring, it will use `ostree-mirror-<remotename>`.
+ * Avoid using excessively long strings here.  A good practice is to
+ * use a short prefix for your software.  For example, rpm-ostree could
+ * use `rpm-ostree-import` when importing RPMs.
+ *
+ * Calling ostree_repo_exit_transaction() will exit the transaction state,
+ * but not delete any already written objects.  This is useful if for
+ * example the user presses Ctrl-C for a pull; you don't want to delete
+ * partially pulled files.  If however you want to delete any partially
+ * written state, call ostree_repo_abort_transaction().
+ *
+ * The parameter @out_cleanup is intended as a convenience for C programming
+ * language callers to automatically invoke ostree_repo_abort_transaction().
+ * Note that this has no effect if ostree_repo_commit_transaction() or
+ * ostree_repo_exit_transaction() have already been invoked.
+ *
+ * There can only be one transaction at a time on an `OstreeRepo` object
+ * instance. If you want to perform concurrent operations, the current
+ * recommendation is to create a new `OstreeRepo` instance per operation/thread.
+ */
+gboolean
+ostree_repo_setup_transaction (OstreeRepo               *self,
+                               const char               *taskid,
+                               guint64                   expected_size,
+                               OstreeRepoTransactionCleanup *out_cleanup,
+                               GError                  **error)
+{
+}
+
+/**
  * ostree_repo_prepare_transaction:
  * @self: An #OstreeRepo
  * @out_transaction_resume: (allow-none) (out): Whether this transaction
@@ -1127,6 +1190,28 @@ ostree_repo_prepare_transaction (OstreeRepo     *self,
   if (out_transaction_resume)
     *out_transaction_resume = ret_transaction_resume;
   return TRUE;
+}
+
+
+/**
+ * ostree_repo_exit_transaction:
+ * @self: An #OstreeRepo
+ * @cleanup: Whether or not to perform a cleanup of te
+ * @error: Error
+ *
+ * Starts or resumes a transaction. In order to write to a repo, you
+ * need to start a transaction. You can complete the transaction with
+ * ostree_repo_commit_transaction(), or abort the transaction with
+ * ostree_repo_abort_transaction().
+ *
+ * Currently, transactions are not atomic, and aborting a transaction
+ * will not erase any data you  write during the transaction.
+ */
+void
+ostree_repo_exit_transaction (OstreeRepo *self,
+                              gboolean    cleanup)
+{
+  
 }
 
 static gboolean
@@ -2765,6 +2850,7 @@ write_directory_to_mtree_internal (OstreeRepo                  *self,
 
 static gboolean
 write_dfd_iter_to_mtree_internal (OstreeRepo                  *self,
+                                  OstreeRepoTransaction       *txn,
                                   GLnxDirFdIterator           *src_dfd_iter,
                                   OstreeMutableTree           *mtree,
                                   OstreeRepoCommitModifier    *modifier,
@@ -2937,6 +3023,7 @@ ostree_repo_write_dfd_to_mtree (OstreeRepo                *self,
                                 GCancellable              *cancellable,
                                 GError                   **error)
 {
+  OstreeRepoTransaction *txn = ostree_mutable_tree_get_transaction (mtree);
   if (modifier && modifier->flags & OSTREE_REPO_COMMIT_MODIFIER_FLAGS_GENERATE_SIZES)
     self->generate_sizes = TRUE;
 
@@ -2945,7 +3032,7 @@ ostree_repo_write_dfd_to_mtree (OstreeRepo                *self,
     return FALSE;
 
   g_autoptr(GPtrArray) pathbuilder = g_ptr_array_new ();
-  if (!write_dfd_iter_to_mtree_internal (self, &dfd_iter, mtree, modifier, pathbuilder,
+  if (!write_dfd_iter_to_mtree_internal (self, txn, &dfd_iter, mtree, modifier, pathbuilder,
                                          cancellable, error))
     return FALSE;
 

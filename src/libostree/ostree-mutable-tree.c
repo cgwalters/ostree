@@ -47,6 +47,8 @@ struct OstreeMutableTree
 {
   GObject parent_instance;
 
+  OstreeRepoTransaction *txn;
+
   char *contents_checksum;
   char *metadata_checksum;
 
@@ -62,6 +64,8 @@ ostree_mutable_tree_finalize (GObject *object)
   OstreeMutableTree *self;
 
   self = OSTREE_MUTABLE_TREE (object);
+
+  g_clear_object (&self->txn);
 
   g_free (self->contents_checksum);
   g_free (self->metadata_checksum);
@@ -361,6 +365,18 @@ ostree_mutable_tree_get_files (OstreeMutableTree *self)
 }
 
 /**
+ * ostree_mutable_tree_get_transaction:
+ * @self: Self
+ *
+ * Returns: (transfer none) (nullable): The repository transaction or %NULL
+ */
+OstreeRepoTransaction *
+ostree_mutable_tree_get_transaction (OstreeMutableTree *self)
+{
+  return self->txn;
+}
+
+/**
  * ostree_mutable_tree_new:
  *
  * Returns: (transfer full): A new tree
@@ -368,5 +384,13 @@ ostree_mutable_tree_get_files (OstreeMutableTree *self)
 OstreeMutableTree *
 ostree_mutable_tree_new (void)
 {
-  return (OstreeMutableTree*)g_object_new (OSTREE_TYPE_MUTABLE_TREE, NULL);
+  return ostree_mutable_tree_new_for_transaction (NULL);
+}
+
+OstreeMutableTree *
+ostree_mutable_tree_new_for_transaction (OstreeRepoTransaction *txn)
+{
+  OstreeMutableTree *ret = (OstreeMutableTree*)g_object_new (OSTREE_TYPE_MUTABLE_TREE, NULL);
+  ret->txn = txn ? g_object_ref (txn) : NULL;
+  return ret;
 }

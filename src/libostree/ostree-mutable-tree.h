@@ -52,6 +52,12 @@ _OSTREE_PUBLIC
 OstreeMutableTree *ostree_mutable_tree_new (void);
 
 _OSTREE_PUBLIC
+OstreeMutableTree *ostree_mutable_tree_new_for_transaction (OstreeRepoTransaction *txn);
+
+_OSTREE_PUBLIC
+OstreeRepoTransaction *ostree_mutable_tree_get_transaction (OstreeMutableTree *self);
+
+_OSTREE_PUBLIC
 void ostree_mutable_tree_set_metadata_checksum (OstreeMutableTree *self,
                                                 const char        *checksum);
 

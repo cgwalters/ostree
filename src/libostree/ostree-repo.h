@@ -40,6 +40,12 @@ G_BEGIN_DECLS
 #define OSTREE_IS_REPO(obj) \
   (G_TYPE_CHECK_INSTANCE_TYPE ((obj), OSTREE_TYPE_REPO))
 
+#define OSTREE_TYPE_REPO_TRANSACTION ostree_repo_transaction_get_type()
+#define OSTREE_REPO_TRANSACTION(obj)                                              \
+  (G_TYPE_CHECK_INSTANCE_CAST ((obj), OSTREE_TYPE_REPO_TRANSACTION, OstreeRepoTransaction))
+#define OSTREE_IS_REPO_TRANSACTION(obj)                               \
+  (G_TYPE_CHECK_INSTANCE_TYPE ((obj), OSTREE_TYPE_REPO_TRANSACTION))
+
 _OSTREE_PUBLIC
 gboolean ostree_repo_mode_from_string (const char      *mode,
                                        OstreeRepoMode  *out_mode,
@@ -47,6 +53,9 @@ gboolean ostree_repo_mode_from_string (const char      *mode,
 
 _OSTREE_PUBLIC
 GType ostree_repo_get_type (void);
+
+_OSTREE_PUBLIC
+GType ostree_repo_transaction_get_type (void);
 
 _OSTREE_PUBLIC
 OstreeRepo* ostree_repo_new (GFile *path);
@@ -298,6 +307,43 @@ _OSTREE_PUBLIC
 gboolean      ostree_repo_abort_transaction (OstreeRepo     *self,
                                              GCancellable   *cancellable,
                                              GError        **error);
+
+/**
+ * OstreeRepoTransaction:
+ *
+ * Holds the result of ostree_repo_setup_transaction().
+ * and ostree_repo_setup_transaction() e.g.:
+ *
+ * |[<!-- language="C" -->
+ *   g_auto(OstreeRepoTransactionCleanup) txncleanup = { NULL };
+ *   if (!ostree_repo_setup_transaction (repo, ..., ..., &txncleanup, error))
+ *     ...
+ * ]|
+ */
+typedef struct OstreeRepoTransaction OstreeRepoTransaction;
+static inline void
+ostree_repo_transaction_autocleanup (OstreeRepoTransaction *txn)
+{
+  if (txnc->repo)
+    {
+      (void) ostree_repo_abort_transaction (txnc->repo, NULL, NULL);
+      g_clear_object (&txnc->repo);
+    }
+}
+G_DEFINE_AUTO_CLEANUP_CLEAR_FUNC(OstreeRepoTransactionCleanup, ostree_repo_transaction_autocleanup)
+
+_OSTREE_PUBLIC
+gboolean      ostree_repo_setup_transaction (OstreeRepo                   *self,
+                                             const char                   *taskid,
+                                             guint64                       expected_size,
+                                             OstreeRepoTransactionCleanup *out_cleanup,
+                                             GError                      **error);
+
+_OSTREE_PUBLIC
+void          ostree_repo_exit_transaction  (OstreeRepo                   *self,
+                                             gboolean                      cleanup);
+
+
 
 _OSTREE_PUBLIC
 void          ostree_repo_transaction_set_refspec (OstreeRepo *self,

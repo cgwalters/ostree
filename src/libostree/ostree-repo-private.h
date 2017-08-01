@@ -107,13 +107,7 @@ struct OstreeRepo {
   GWeakRef sysroot; /* Weak to avoid a circular ref; see also `is_system` */
   char *remotes_config_dir;
 
-  GHashTable *txn_refs;  /* (element-type utf8 utf8) */
-  GHashTable *txn_collection_refs;  /* (element-type OstreeCollectionRef utf8) */
-  GMutex txn_stats_lock;
-  OstreeRepoTransactionStats txn_stats;
-  /* Implementation of min-free-space-percent */
-  gulong txn_blocksize;
-  fsblkcnt_t max_txn_blocks;
+  OstreeRepoTransaction *txn;
 
   GMutex cache_lock;
   guint dirmeta_cache_refcount;
@@ -149,6 +143,17 @@ struct OstreeRepo {
   gchar *collection_id;
 
   OstreeRepo *parent_repo;
+};
+
+
+struct OstreeRepoTransaction {
+  GHashTable *txn_refs;  /* (element-type utf8 utf8) */
+  GHashTable *txn_collection_refs;  /* (element-type OstreeCollectionRef utf8) */
+  GMutex txn_stats_lock;
+  OstreeRepoTransactionStats txn_stats;
+  /* Implementation of min-free-space-percent */
+  gulong txn_blocksize;
+  fsblkcnt_t max_txn_blocks;
 };
 
 typedef struct {
