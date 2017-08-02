@@ -342,6 +342,12 @@ gboolean      ostree_repo_setup_transaction (OstreeRepo                   *self,
 _OSTREE_PUBLIC
 void          ostree_repo_exit_transaction  (OstreeRepo                   *self,
                                              gboolean                      cleanup);
+_OSTREE_PUBLIC
+void          ostree_repo_get_thread_transaction  (OstreeRepo                   *self,
+                                                   OstreeRepoTransaction        *transaction);
+_OSTREE_PUBLIC
+void          ostree_repo_set_thread_transaction  (OstreeRepo                   *self,
+                                                   OstreeRepoTransaction        *transaction);
 
 
 
