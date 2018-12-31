@@ -1,0 +1,23 @@
+#!/usr/bin/bash
+
+set -xeuo pipefail
+
+tname=$1
+shift
+
+dn=$(cd $(dirname $0) && pwd)
+
+. ${dn}/../libtest-core.sh
+. ${dn}/libcoreos-qemutest.sh
+prepare_tmpdir() {
+    local tmpdir=${1:-/tmp}
+    test_tmpdir=$(mktemp -p ${tmpdir} -d ostree-insttest.XXXXXXXX)
+    touch ${test_tmpdir}/.testtmp
+    cd ${test_tmpdir}
+}
+prepare_tmpdir
+coreos_qemutest_setup
+vm_cmd /var/srv/testcode/destructive/itest-${tname}.sh
+echo "Completed ${tname}"
+
+cd / && rm "${test_tmpdir}" -rf

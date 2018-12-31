@@ -1,0 +1,283 @@
+#!/usr/bin/python3 -u
+
+import asyncio
+import os,sys,subprocess,argparse,json,tempfile,ctypes,signal,io,fcntl
+import base64
+from collections import namedtuple
+from contextlib import redirect_stdout
+
+EXECSERVICE = """#!/usr/bin/python3
+import os,sys,subprocess,json,fcntl
+def send(msg):
+    json.dump(msg, sys.stdout)
+    sys.stdout.write('\\n')
+    sys.stdout.flush()
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    cmd = msg['cmd']
+    if cmd == 'exec':
+        cmd_result = subprocess.run(msg['args'], capture_output=True, text=True, cwd='/')
+        send({'rc': cmd_result.returncode,
+              'stdout': cmd_result.stdout,
+              'stderr': cmd_result.stderr })
+    elif cmd == 'reboot':
+       lockpath = '/run/coreos-run-qemu-reboot.lock'
+       with open(lockpath, 'w') as f:
+           fcntl.lockf(f.fileno(), fcntl.LOCK_EX)
+           subprocess.check_call(['flock', lockpath, 'systemd-run', 'reboot'])
+           send({'status': "Successfully queued reboot"})
+           sys.exit(0)
+"""
+
+IGNITION_CONFIG = {
+    "ignition": {
+        "config": {},
+        "security": {
+            "tls": {}
+        },
+        "timeouts": {},
+        "version": "2.2.0"
+    },
+    "storage": {
+        "files": [{
+            "filesystem": "root",
+            "path": "/usr/local/bin/coreos-qemutest-execservice",
+            "mode": 0o755,
+            "contents": { "source": "data:;base64," + base64.b64encode(EXECSERVICE.encode('UTF-8')).decode('UTF-8') }
+        }],
+    },
+    "passwd": {
+        "users": [
+            {
+                "groups": ["sudo"],
+                "name": "core"
+            }
+        ]
+    },
+    "systemd": { "units": [
+        {'name': 'coreos-qemutest-journal-dump.service',
+         'enabled': True,
+         'contents': """
+         [Service]
+         ExecStart=/bin/sh -c 'journalctl -o json -b -f --no-tail > /dev/virtio-ports/coreos-qemutest-journaljson'
+         [Install]
+         WantedBy=multi-user.target
+         """
+        },
+        {'name': 'coreos-qemutest-execservice.service',
+         'enabled': True,
+         'contents': """
+         [Service]
+         ExecStart=/bin/sh -c 'exec /usr/local/bin/coreos-qemutest-execservice<>/dev/virtio-ports/coreos-qemutest-execservice 1>&0'
+         [Install]
+         WantedBy=multi-user.target
+         """
+        },
+    ] },
+}
+
+def run_sync_verbose(argv, **kwargs):
+    run(subprocess.check_call, argv, **kwargs)
+
+# Copy of bits from https://pagure.io/standard-test-roles/pull-request/223
+def get_qemu_smp_arg():
+    """Determine the number of CPUs that should be visible in the guest.
+    See e.g. https://www.redhat.com/archives/libvirt-users/2017-June/msg00025.html
+    We want to match the number of host physical cores.
+    """
+    # We may be run in a cgroup with fewer cores available than physical.
+    available_cpu = int(subprocess.check_output(['nproc']).strip())
+    # https://stackoverflow.com/questions/6481005/how-to-obtain-the-number-of-cpus-cores-in-linux-from-the-command-line
+    core_sockets = set()
+    for line in io.BytesIO(subprocess.check_output(['lscpu', '-b', '-p=Core,Socket'])):
+        if line.startswith(b'#'):
+            continue
+        core_sockets.add(line.strip())
+    sockets = min(available_cpu, len(core_sockets))
+    return 'sockets={},cores=1,threads=1'.format(sockets)
+
+QEMUInstance = namedtuple('QEMUInstance', ['proc', 'monitor_path', 'journal_path', 'statedir'])
+
+async def run_qemu(args):
+    console_path = os.path.join(args.statedir, 'console.txt')
+    monitor_path = os.path.join(args.statedir, 'qemumonitor.sock')
+    journal_path = os.path.join(args.statedir, 'journaljson.sock')
+    execservice_path = os.path.join(args.statedir, 'exec.sock')
+    qemuargs = ['qemu-kvm', '-machine', 'accel=kvm',
+                '-cpu', 'host', '-smp', get_qemu_smp_arg(),
+                '-name', 'coreos', '-m', f'{args.memory}', '-nographic',
+                '-netdev', 'user,id=eth0,hostname=coreos',
+                '-device', 'virtio-net-pci,netdev=eth0',
+                '-object', 'rng-random,filename=/dev/urandom,id=rng0',
+                '-device', 'virtio-rng-pci,rng=rng0',
+                '-serial', f'file:{console_path}',
+                '-chardev', f'socket,server,nowait,id=charmonitor,path={monitor_path}',
+                '-mon', 'chardev=charmonitor,id=monitor,mode=control',
+                '-snapshot', '-drive', f'if=virtio,cache=unsafe,file={args.disk}',
+                '-device', 'virtio-serial',
+                '-chardev', f'socket,server,id=execservice,path={execservice_path}',
+                '-device', 'virtserialport,chardev=execservice,name=coreos-qemutest-execservice',
+                '-chardev', f'socket,server,nowait,id=journaljson,path={journal_path}',
+                '-device', 'virtserialport,chardev=journaljson,name=coreos-qemutest-journaljson',
+    ]
+
+    units = IGNITION_CONFIG['systemd']['units']
+    for i,mnt in enumerate(args.mount_ro):
+        src,dest = mnt.split(':', 1)
+        unitname = dest.lstrip('/').replace('/', '-')
+        units.append({ 'name': f'{unitname}.mount',
+                       'enabled': True,
+                       'contents': f"""
+                       [Mount]
+                       What=mnt{i}
+                       Where={dest}
+                       Type=9p
+                       Options=ro,trans=virtio,version=9p2000.L
+                       [Install]
+                       WantedBy=multi-user.target
+                       """})
+        qemuargs.extend(['--fsdev', f'local,id=mnt{i},path={src},security_model=mapped,readonly',
+                         '-device', f'virtio-9p-pci,fsdev=mnt{i},mount_tag=mnt{i}'])
+
+    ignf = open(os.path.join(args.statedir, 'ignition.json'), 'w')
+    json.dump(IGNITION_CONFIG, ignf)
+    ignf.flush()
+    ignf_fileno = ignf.fileno()
+    qemuargs.extend(['-fw_cfg', f'name=opt/com.coreos/config,file=/proc/self/fd/{ignf_fileno}'])
+
+    libc = ctypes.CDLL('libc.so.6')
+    def preexec():
+        libc.prctl(1, signal.SIGTERM)
+
+    print('Running: {}'.format(subprocess.list2cmdline(qemuargs)))
+    proc = await asyncio.create_subprocess_exec(*qemuargs, stdout=sys.stdout, preexec_fn=preexec, pass_fds=[ignf_fileno])
+    return QEMUInstance(proc, monitor_path, journal_path, args.statedir)
+
+class QEMUTest():
+    async def run(self, args):
+        self._tasks = []
+        self.qemui = await run_qemu(args)
+        self._tasks.append(self.qemui.proc.wait())
+        return await asyncio.gather(self._poll_qemu_monitor(),
+                                    self._connect_execserice())
+
+    async def wait(self):
+        return await asyncio.gather(*self._tasks)
+
+    async def _open_qemu_socket(self, path):
+        while not os.path.exists(path):
+            await asyncio.sleep(1)
+        return await asyncio.open_unix_connection(path)
+
+    async def _proxy_journaljson(self):
+        (r,w) = await self._open_qemu_socket(self.qemui.journal_path)
+        outf = None
+        while True:
+            msgbuf = await r.readline()
+            msg = json.loads(msgbuf)
+            if not outf:
+                print("Journal connected")
+                outf = open(os.path.join(self.qemui.statedir, 'journaljson'), 'wb')
+            outf.write(msgbuf)
+
+    async def _connect_execserice(self):
+        (r,w) = await self._open_qemu_socket(os.path.join(self.qemui.statedir, 'exec.sock'))
+        w.write(json.dumps({'cmd': 'exec', 'args': ["echo", "hello", "world"]}).encode('UTF-8'))
+        w.write(b'\n')
+        await w.drain()
+        msg = json.loads(await r.readline())
+        self.execservice = (r, w)
+        assert msg['rc'] == 0 and msg['stdout'] == 'hello world\n'
+        print(f"execservice is up")
+
+        await self._start_server()
+
+
+    async def _start_server(self):
+        self.server = await asyncio.start_unix_server(self._handle_client, os.path.join(self.qemui.statedir, 'cmd.sock'))
+
+    async def _handle_client_exec(self, r, w, cmd):
+        (execr, execw) = self.execservice
+        execw.write(json.dumps(cmd).encode('UTF-8'))
+        execw.write(b'\n')
+        await execw.drain()
+        response = await execr.readline()
+        w.write(response)
+        await w.drain()
+
+    async def _handle_client(self, r, w):
+        while True:
+            buf = await r.readline()
+            if buf == b'':
+                return
+            print(f"Handling client cmd: {buf}")
+            msg = json.loads(buf)
+            cmd = msg['cmd']
+            if cmd in ('exec', 'reboot'):
+                await self._handle_client_exec(r, w, msg)
+            else:
+                json.dump({'error': "Unknown command"}, w)
+                await w.drain()
+
+    async def _poll_qemu_monitor(self):
+        (r,w) = await self._open_qemu_socket(self.qemui.monitor_path)
+        qcaps = await r.readline()
+        print("Connected to QEMU monitor")
+        w.write(json.dumps({'execute': 'qmp_capabilities'}).encode('UTF-8'))
+        await w.drain()
+
+        self.monitor = (r, w)
+
+        # Now that the monitor is up, do other services
+        self._tasks.append(self._proxy_journaljson())
+
+async def async_main(args, readypipe_write):
+    os.mkdir(args.statedir)
+
+    qtest = QEMUTest()
+    await qtest.run(args)
+
+    print("Closing readypipe")
+    os.close(readypipe_write)
+
+    loop = asyncio.get_event_loop()
+    if args.bind_fd != -1:
+        loop.add_reader(args.bind_fd, lambda: sys.exit(0))
+
+    rc = await qtest.wait()
+    print("qemu exited with rc: {}".format(rc))
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description='')
+    parser.add_argument("--disk", help="Boot qemu image",
+                        action='store', required=True)
+    parser.add_argument("--dir", help="State/logging directory",
+                        dest='statedir', action='store', required=True)
+    parser.add_argument("--mount-ro", help="Mount HOSTSRC,GUESTDEST readonly",
+                        action='append', default=[])
+    parser.add_argument("--memory", help="Memory size in MB",
+                        action='store', type=int, default=2048)
+    parser.add_argument("--bind-fd", help="Exit when file descriptor is closed",
+                        type='int', default=-1)
+    parser.add_argument("--no-fork", help="Do not fork when ready",
+                        action='store_true')
+    args = parser.parse_args()
+
+    pid = None
+    if not args.no_fork:
+        (readypipe_read,readypipe_write) = os.pipe()
+        pid = os.fork()
+        if pid != 0:
+            os.close(readypipe_write)
+            os.read(readypipe_read, 1)
+            print(f"{sys.argv[0]}: Forking into background")
+            sys.exit(0)
+        else:
+            os.close(readypipe_read)
+
+    asyncio.run(async_main(args, readypipe_write))
+
+if __name__ == '__main__':
+    main()
