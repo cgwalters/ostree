@@ -243,7 +243,8 @@ async def async_main(args, readypipe_write):
 
     loop = asyncio.get_event_loop()
     if args.bind_fd != -1:
-        loop.add_reader(args.bind_fd, lambda: sys.exit(0))
+        fd = os.fdopen(args.bind_fd)
+        loop.add_reader(fd, lambda: sys.exit(0))
 
     rc = await qtest.wait()
     print("qemu exited with rc: {}".format(rc))
@@ -260,7 +261,7 @@ def main():
     parser.add_argument("--memory", help="Memory size in MB",
                         action='store', type=int, default=2048)
     parser.add_argument("--bind-fd", help="Exit when file descriptor is closed",
-                        type='int', default=-1)
+                        type=int, default=-1)
     parser.add_argument("--no-fork", help="Do not fork when ready",
                         action='store_true')
     args = parser.parse_args()
