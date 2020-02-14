@@ -27,9 +27,7 @@
 
 #include <libglnx.h>
 #include "ostree-sign-ed25519.h"
-#ifdef HAVE_LIBSODIUM
 #include <sodium.h>
-#endif
 
 #undef G_LOG_DOMAIN
 #define G_LOG_DOMAIN "OSTreeSign"
@@ -95,12 +93,8 @@ _ostree_sign_ed25519_init (OstreeSignEd25519 *self)
   self->public_keys = NULL;
   self->revoked_keys = NULL;
 
-#ifdef HAVE_LIBSODIUM
   if (sodium_init() < 0)
-      self->state = ED25519_FAILED_INITIALIZATION;
-#else
-  self->state = ED25519_NOT_SUPPORTED;
-#endif /* HAVE_LIBSODIUM */
+    self->state = ED25519_FAILED_INITIALIZATION;
 }
 
 static gboolean
@@ -133,9 +127,7 @@ gboolean ostree_sign_ed25519_data (OstreeSign *self,
   g_return_val_if_fail (OSTREE_IS_SIGN (self), FALSE);
   OstreeSignEd25519 *sign = _ostree_sign_ed25519_get_instance_private(OSTREE_SIGN_ED25519(self));
 
-#ifdef HAVE_LIBSODIUM
   guchar *sig = NULL;
-#endif
 
   if (!_ostree_sign_ed25519_is_initialized (sign, error))
       goto err;
@@ -146,7 +138,6 @@ gboolean ostree_sign_ed25519_data (OstreeSign *self,
                           "secret key is not set");
       goto err;
     }
-#ifdef HAVE_LIBSODIUM
   unsigned long long sig_size = 0;
 
   sig = g_malloc0(crypto_sign_BYTES);
@@ -164,18 +155,15 @@ gboolean ostree_sign_ed25519_data (OstreeSign *self,
 
   *signature = g_bytes_new_take (sig, sig_size);
   return TRUE;
-#endif /* HAVE_LIBSODIUM */
 err:
   g_prefix_error (error, "Not able to sign: ");
   return FALSE;
 }
 
-#ifdef HAVE_LIBSODIUM
 static gint
 _compare_ed25519_keys(gconstpointer a, gconstpointer b) {
     return memcmp (a, b, crypto_sign_PUBLICKEYBYTES);
 }
-#endif
 
 gboolean ostree_sign_ed25519_data_verify (OstreeSign *self,
                                           GBytes     *data,
@@ -207,7 +195,6 @@ gboolean ostree_sign_ed25519_data_verify (OstreeSign *self,
       goto out;
     }
 
-#ifdef HAVE_LIBSODIUM
   /* If no keys pre-loaded then,
    * try to load public keys from storage(s) */
   if (sign->public_keys == NULL)
@@ -268,7 +255,6 @@ gboolean ostree_sign_ed25519_data_verify (OstreeSign *self,
   if (ret != TRUE)
     g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED,
                          "no valid signatures found");
-#endif /* HAVE_LIBSODIUM */
 
 out:
   if (ret != TRUE)
@@ -305,7 +291,6 @@ gboolean ostree_sign_ed25519_clear_keys (OstreeSign *self,
   if (!_ostree_sign_ed25519_is_initialized (sign, error))
     goto err;
 
-#ifdef HAVE_LIBSODIUM
   /* Clear secret key */
   if (sign->secret_key != NULL)
   {
@@ -329,7 +314,6 @@ gboolean ostree_sign_ed25519_clear_keys (OstreeSign *self,
     }
 
   return TRUE;
-#endif /* HAVE_LIBSODIUM */
 
 err:
   return FALSE;
@@ -349,7 +333,6 @@ gboolean ostree_sign_ed25519_set_sk (OstreeSign *self,
   if (!ostree_sign_ed25519_clear_keys (self, error))
     goto err;
 
-#ifdef HAVE_LIBSODIUM
   OstreeSignEd25519 *sign = _ostree_sign_ed25519_get_instance_private(OSTREE_SIGN_ED25519(self));
 
   gsize n_elements = 0;
@@ -379,8 +362,6 @@ gboolean ostree_sign_ed25519_set_sk (OstreeSign *self,
     }
 
   return TRUE;
-#endif /* HAVE_LIBSODIUM */
-
 err:
   return FALSE;
 }
@@ -416,7 +397,6 @@ gboolean ostree_sign_ed25519_add_pk (OstreeSign *self,
   if (!_ostree_sign_ed25519_is_initialized (sign, error))
     return FALSE;
 
-#ifdef HAVE_LIBSODIUM
   gpointer key = NULL;
   gsize n_elements = 0;
 
@@ -446,11 +426,9 @@ gboolean ostree_sign_ed25519_add_pk (OstreeSign *self,
       sign->public_keys = g_list_prepend (sign->public_keys, newkey);
     }
 
-#endif /* HAVE_LIBSODIUM */
   return TRUE;
 }
 
-#ifdef HAVE_LIBSODIUM
 /* Add revoked public key */
 static gboolean
 _ed25519_add_revoked (OstreeSign *self,
@@ -484,8 +462,6 @@ _ed25519_add_revoked (OstreeSign *self,
 
   return TRUE;
 }
-#endif /* HAVE_LIBSODIUM */
-
 
 static gboolean
 _load_pk_from_stream (OstreeSign *self,
@@ -494,7 +470,6 @@ _load_pk_from_stream (OstreeSign *self,
                       GError **error)
 {
   g_return_val_if_fail (key_data_in, FALSE);
-#ifdef HAVE_LIBSODIUM
   gboolean ret = FALSE;
 
   /* Use simple file format with just a list of base64 public keys per line */
@@ -534,7 +509,6 @@ out:
   return ret;
 
 err:
-#endif /* HAVE_LIBSODIUM */
   return FALSE;
 }
 
