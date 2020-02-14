@@ -56,7 +56,6 @@ G_DEFINE_TYPE_WITH_CODE (OstreeSignDummy, _ostree_sign_dummy, G_TYPE_OBJECT,
 static void
 ostree_sign_dummy_iface_init (OstreeSignInterface *self)
 {
-  g_debug ("%s enter", __FUNCTION__);
 
   self->get_name = ostree_sign_dummy_get_name;
   self->data = ostree_sign_dummy_data;
@@ -72,13 +71,11 @@ ostree_sign_dummy_iface_init (OstreeSignInterface *self)
 static void
 _ostree_sign_dummy_class_init (OstreeSignDummyClass *self)
 {
-  g_debug ("%s enter", __FUNCTION__);
 }
 
 static void
 _ostree_sign_dummy_init (OstreeSignDummy *self)
 {
-  g_debug ("%s enter", __FUNCTION__);
 
   self->sk_ascii = NULL;
   self->pk_ascii = NULL;
@@ -86,7 +83,6 @@ _ostree_sign_dummy_init (OstreeSignDummy *self)
 
 gboolean ostree_sign_dummy_set_sk (OstreeSign *self, GVariant *key, GError **error)
 {
-  g_debug ("%s enter", __FUNCTION__);
 
   OstreeSignDummy *sign =  _ostree_sign_dummy_get_instance_private(OSTREE_SIGN_DUMMY(self));
 
@@ -100,7 +96,6 @@ gboolean ostree_sign_dummy_set_sk (OstreeSign *self, GVariant *key, GError **err
 
 gboolean ostree_sign_dummy_set_pk (OstreeSign *self, GVariant *key, GError **error)
 {
-  g_debug ("%s enter", __FUNCTION__);
 
   OstreeSignDummy *sign =  _ostree_sign_dummy_get_instance_private(OSTREE_SIGN_DUMMY(self));
 
@@ -119,7 +114,6 @@ gboolean ostree_sign_dummy_data (OstreeSign *self,
                                  GError **error)
 {
 
-  g_debug ("%s enter", __FUNCTION__);
   g_return_val_if_fail (OSTREE_IS_SIGN (self), FALSE);
 
   OstreeSignDummy *sign =  _ostree_sign_dummy_get_instance_private(OSTREE_SIGN_DUMMY(self));
@@ -131,7 +125,6 @@ gboolean ostree_sign_dummy_data (OstreeSign *self,
 
 const gchar * ostree_sign_dummy_get_name (OstreeSign *self)
 {
-  g_debug ("%s enter", __FUNCTION__);
   g_return_val_if_fail (OSTREE_IS_SIGN (self), FALSE);
 
   return OSTREE_SIGN_DUMMY_NAME;
@@ -139,14 +132,12 @@ const gchar * ostree_sign_dummy_get_name (OstreeSign *self)
 
 const gchar * ostree_sign_dummy_metadata_key (OstreeSign *self)
 {
-  g_debug ("%s enter", __FUNCTION__);
 
   return OSTREE_SIGN_METADATA_DUMMY_KEY;
 }
 
 const gchar * ostree_sign_dummy_metadata_format (OstreeSign *self)
 {
-  g_debug ("%s enter", __FUNCTION__);
 
   return OSTREE_SIGN_METADATA_DUMMY_TYPE;
 }
@@ -156,7 +147,6 @@ gboolean ostree_sign_dummy_data_verify (OstreeSign *self,
                                             GVariant   *signatures,
                                             GError     **error)
 {
-  g_debug ("%s enter", __FUNCTION__);
   g_return_val_if_fail (OSTREE_IS_SIGN (self), FALSE);
   g_return_val_if_fail (data != NULL, FALSE);
 
