@@ -13,7 +13,6 @@ use hyper::{Body, Request, Response};
 use hyper_staticfile::Static;
 
 pub(crate) type TestFn = Box<dyn Fn() -> Result<()>>;
-pub(crate) type TmpDirTestFn = Box<dyn Fn(&Path) -> Result<()>>;
 pub(crate) type Test = libtest_mimic::Test<TestFn>;
 
 pub(crate) fn newtest(name: &str, f: TestFn) -> Test {
@@ -40,12 +39,19 @@ macro_rules! deftests_map {
     }};
 }
 
-pub(crate) fn with_tmpdir(f: TmpDirTestFn) -> TestFn {
+pub(crate) fn with_tmpdir(f: TestFn) -> TestFn {
     Box::new(move || {
         let tmp_dir = tempfile::Builder::new()
             .prefix("ostree-insttest")
             .tempdir()?;
-        f(tmp_dir.path())
+        let h = procspawn::spawn((tmp_dir.path(), f), |(path, f)| -> std::result::Result<(), String> {
+            || -> Result<()> {
+                std::env::set_current_dir(path)?;
+                f()?;
+                Ok(())
+            }().map_err(|e| e.to_string())
+        });
+        h.join().unwrap()
     })
 }
 

@@ -26,6 +26,8 @@ fn run_test(test: &test::Test) -> libtest_mimic::Outcome {
 }
 
 fn main() -> Result<()> {
+    procspawn::init();
+
     // Ensure we're always in tempdir so we can rely on it globally
     let tmp_dir = tempfile::Builder::new()
         .prefix("ostree-insttest-top")

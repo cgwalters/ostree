@@ -14,4 +14,4 @@ cd ${top}/${cosabuild}
 if [ -z "$@" ]; then
     set -- 'ext.ostree.*' "$@"
 fi
-exec cosa kola run -E ${top} "$@"
+exec kola run -E ${top} "$@"
