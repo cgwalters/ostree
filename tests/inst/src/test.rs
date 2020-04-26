@@ -13,8 +13,17 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response};
 use hyper_staticfile::Static;
 
+#[derive(Debug)]
+pub(crate) struct TestData {
+    pub(crate) name: &'static str,
+    pub(crate) tempdir: bool,
+    pub(crate) f: fn() -> Result<()>,
+}
+
 #[distributed_slice]
-pub(crate) static TESTS: [fn() -> Result<()>] = [..];
+pub(crate) static TESTFNS: [fn() -> Result<()>] = [..];
+#[distributed_slice]
+pub(crate) static TESTS: [TestData] = [..];
 
 pub(crate) type TestFn = Box<dyn Fn() -> Result<()>>;
 pub(crate) type Test = libtest_mimic::Test<TestFn>;

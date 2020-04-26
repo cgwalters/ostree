@@ -8,10 +8,33 @@ mod repobin;
 mod sysroot;
 mod test;
 
+use test::Test;
+
+fn gather_tests() -> impl Iterator<Item=Test> {
+    test::TESTFNS.iter().enumerate().map(|(i, f)| {
+        Test {
+            name: format!("test{}", i),
+            kind: "".into(),
+            is_ignored: false,
+            is_bench: false,
+            data: Box::new(f),
+        }
+    }).chain(test::TESTS.iter().map(|t| {
+        Test {
+            name: t.name.into(),
+            kind: "".into(),
+            is_ignored: false,
+            is_bench: false,
+            data: Box::new(t.f),
+        }
+    }))
+}
+
 fn nondestructive_tests() -> Vec<test::Test> {
     repobin::tests()
         .into_iter()
         .chain(sysroot::tests().into_iter())
+        .chain(gather_tests())
         .collect()
 }
 

@@ -11,19 +11,26 @@ use linkme::distributed_slice;
 use crate::test::*;
 
 pub(crate) fn tests() -> impl IntoIterator<Item = Test> {
-    crate::deftests!(
-        test_nofifo
-        // test_extensions,
-        // test_pull_basicauth
-    )
+    // crate::deftests!(
+    //     test_nofifo
+    //     // test_extensions,
+    //     // test_pull_basicauth
+    // )
+    Vec::new()
 }
 
 #[distributed_slice(TESTS)]
+static TEST_BASIC : TestData = TestData {
+    name: "basic",
+    f: test_basic,
+    tempdir: false,
+};
 fn test_basic() -> Result<()> {
-    sh_execute!(r"ostree --help")?;
+    sh_execute!(r"ostree --help >/dev/null")?;
     Ok(())
 }
 
+#[distributed_slice(TESTFNS)]
 #[with_procspawn_tempdir]
 fn test_nofifo() -> Result<()> {
     sh_execute!(
