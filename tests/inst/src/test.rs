@@ -5,12 +5,16 @@ use std::path::Path;
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
+use linkme::distributed_slice;
 
 // HTTP Server deps
 use futures_util::future;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response};
 use hyper_staticfile::Static;
+
+#[distributed_slice]
+pub(crate) static TESTS: [fn() -> Result<()>] = [..];
 
 pub(crate) type TestFn = Box<dyn Fn() -> Result<()>>;
 pub(crate) type Test = libtest_mimic::Test<TestFn>;
@@ -37,22 +41,6 @@ macro_rules! deftests_map {
     ( $m:path, $($n:ident),* ) => {{
         vec![$( crate::test::newtest(stringify!($n), $m(Box::new($n) )), )*]
     }};
-}
-
-pub(crate) fn with_tmpdir(f: TestFn) -> TestFn {
-    Box::new(move || {
-        let tmp_dir = tempfile::Builder::new()
-            .prefix("ostree-insttest")
-            .tempdir()?;
-        let h = procspawn::spawn((tmp_dir.path(), f), |(path, f)| -> std::result::Result<(), String> {
-            || -> Result<()> {
-                std::env::set_current_dir(path)?;
-                f()?;
-                Ok(())
-            }().map_err(|e| e.to_string())
-        });
-        h.join().unwrap()
-    })
 }
 
 /// Run command and assert that its stderr contains pat

@@ -26,6 +26,13 @@ tokio = { version = "0.2", features = ["full"] }
 futures-util = "0.3.1"
 base64 = "0.12.0"
 procspawn = "0.8"
+proc-macro2 = "0.4"
+quote = "0.6"
+syn = "0.15"
+linkme = "0.2"
+
+#with-procspawn-tempdir = { git = "https://github.com/cgwalters/with-procspawn-tempdir" }
+with-procspawn-tempdir = { path = "/var/srv/walters/src/github/cgwalters/with-procspawn-tempdir" }
 
 # See https://github.com/tcr/commandspec/pulls?q=is%3Apr+author%3Acgwalters+
 [patch.crates-io]
