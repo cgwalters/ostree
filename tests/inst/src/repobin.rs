@@ -7,30 +7,16 @@ use anyhow::{Context, Result};
 use commandspec::{sh_command, sh_execute};
 use tokio::runtime::Runtime;
 use with_procspawn_tempdir::with_procspawn_tempdir;
-use linkme::distributed_slice;
 use crate::test::*;
+use itest_macro::itest;
 
-pub(crate) fn tests() -> impl IntoIterator<Item = Test> {
-    // crate::deftests!(
-    //     test_nofifo
-    //     // test_extensions,
-    //     // test_pull_basicauth
-    // )
-    Vec::new()
-}
-
-#[distributed_slice(TESTS)]
-static TEST_BASIC : TestData = TestData {
-    name: "basic",
-    f: test_basic,
-    tempdir: false,
-};
+#[itest]
 fn test_basic() -> Result<()> {
     sh_execute!(r"ostree --help >/dev/null")?;
     Ok(())
 }
 
-#[distributed_slice(TESTFNS)]
+#[itest]
 #[with_procspawn_tempdir]
 fn test_nofifo() -> Result<()> {
     sh_execute!(

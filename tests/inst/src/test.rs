@@ -13,44 +13,18 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response};
 use hyper_staticfile::Static;
 
+pub(crate) type TestFn = fn() -> Result<()>;
+
 #[derive(Debug)]
-pub(crate) struct TestData {
+pub(crate) struct Test {
     pub(crate) name: &'static str,
-    pub(crate) tempdir: bool,
-    pub(crate) f: fn() -> Result<()>,
+    pub(crate) f: TestFn,
 }
+
+pub(crate) type TestImpl = libtest_mimic::Test<&'static Test>;
 
 #[distributed_slice]
-pub(crate) static TESTFNS: [fn() -> Result<()>] = [..];
-#[distributed_slice]
-pub(crate) static TESTS: [TestData] = [..];
-
-pub(crate) type TestFn = Box<dyn Fn() -> Result<()>>;
-pub(crate) type Test = libtest_mimic::Test<TestFn>;
-
-pub(crate) fn newtest(name: &str, f: TestFn) -> Test {
-    Test {
-        name: name.into(),
-        kind: "".into(),
-        is_ignored: false,
-        is_bench: false,
-        data: f,
-    }
-}
-
-#[macro_export]
-macro_rules! deftests {
-    ( $($n:ident),* ) => {{
-        vec![$( crate::test::newtest(stringify!($n), Box::new($n) ), )*]
-    }};
-}
-
-#[macro_export]
-macro_rules! deftests_map {
-    ( $m:path, $($n:ident),* ) => {{
-        vec![$( crate::test::newtest(stringify!($n), $m(Box::new($n) )), )*]
-    }};
-}
+pub(crate) static TESTS: [Test] = [..];
 
 /// Run command and assert that its stderr contains pat
 pub(crate) fn cmd_fails_with<C: BorrowMut<Command>>(mut c: C, pat: &str) -> Result<()> {

@@ -31,6 +31,8 @@ quote = "0.6"
 syn = "0.15"
 linkme = "0.2"
 
+itest-macro = { path = "itest-macro" }
+
 #with-procspawn-tempdir = { git = "https://github.com/cgwalters/with-procspawn-tempdir" }
 with-procspawn-tempdir = { path = "/var/srv/walters/src/github/cgwalters/with-procspawn-tempdir" }
 

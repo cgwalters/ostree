@@ -8,38 +8,20 @@ mod repobin;
 mod sysroot;
 mod test;
 
-use test::Test;
-
-fn gather_tests() -> impl Iterator<Item=Test> {
-    test::TESTFNS.iter().enumerate().map(|(i, f)| {
-        Test {
-            name: format!("test{}", i),
-            kind: "".into(),
-            is_ignored: false,
-            is_bench: false,
-            data: Box::new(f),
-        }
-    }).chain(test::TESTS.iter().map(|t| {
-        Test {
+fn gather_tests() -> Vec<test::TestImpl> {
+    test::TESTS.iter().map(|t| {
+        libtest_mimic::Test {
             name: t.name.into(),
             kind: "".into(),
             is_ignored: false,
             is_bench: false,
-            data: Box::new(t.f),
+            data: t,
         }
-    }))
+    }).collect()
 }
 
-fn nondestructive_tests() -> Vec<test::Test> {
-    repobin::tests()
-        .into_iter()
-        .chain(sysroot::tests().into_iter())
-        .chain(gather_tests())
-        .collect()
-}
-
-fn run_test(test: &test::Test) -> libtest_mimic::Outcome {
-    if let Err(e) = (test.data)() {
+fn run_test(test: &test::TestImpl) -> libtest_mimic::Outcome {
+    if let Err(e) = (test.data.f)() {
         libtest_mimic::Outcome::Failed {
             msg: Some(e.to_string()),
         }
@@ -58,7 +40,6 @@ fn main() -> Result<()> {
     std::env::set_current_dir(tmp_dir.path())?;
 
     let args = libtest_mimic::Arguments::from_args();
-    let tests = nondestructive_tests();
-
+    let tests = gather_tests();
     libtest_mimic::run_tests(&args, tests, run_test).exit();
 }
