@@ -7,6 +7,9 @@ use std::process::Command;
 use anyhow::{bail, Context, Result};
 use linkme::distributed_slice;
 
+pub use itest_macro::itest;
+pub use with_procspawn_tempdir::with_procspawn_tempdir;
+
 // HTTP Server deps
 use futures_util::future;
 use hyper::service::{make_service_fn, service_fn};
