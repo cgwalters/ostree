@@ -3366,9 +3366,9 @@ ostree_repo_pull_with_options (OstreeRepo             *self,
       opt_gpg_verify_summary_set =
         g_variant_lookup (options, "gpg-verify-summary", "b", &pull_data->gpg_verify_summary);
       opt_sign_verify_set =
-        g_variant_lookup (options, "sign-verify", "b", &pull_data->sign_verify);
+        g_variant_lookup (options, "sign-verify", "^a&s", &pull_data->sign_verify);
       opt_sign_verify_summary_set =
-        g_variant_lookup (options, "sign-verify-summary", "b", &pull_data->sign_verify_summary);
+        g_variant_lookup (options, "sign-verify-summary", "^a&s", &pull_data->sign_verify_summary);
       (void) g_variant_lookup (options, "depth", "i", &pull_data->maxdepth);
       (void) g_variant_lookup (options, "disable-static-deltas", "b", &pull_data->disable_static_deltas);
       (void) g_variant_lookup (options, "require-static-deltas", "b", &pull_data->require_static_deltas);
@@ -3550,15 +3550,19 @@ ostree_repo_pull_with_options (OstreeRepo             *self,
       /* Fetch verification settings from remote if it wasn't already
        * explicitly set in the options. */
       if (!opt_sign_verify_set)
-        if (!ostree_repo_get_remote_boolean_option (self, pull_data->remote_name,
-                                                    "sign-verify", FALSE,
-                                                    &pull_data->sign_verify, error))
-          goto out;
+        {
+          if (!ostree_repo_get_remote_list_option (self, pull_data->remote_name,
+                                                   "sign-verify", FALSE,
+                                                   &pull_data->sign_verify, error))
+            goto out;
+        }
       if (!opt_sign_verify_summary_set)
-        if (!ostree_repo_get_remote_boolean_option (self, pull_data->remote_name,
-                                                    "sign-verify-summary", FALSE,
-                                                    &pull_data->sign_verify_summary, error))
-          goto out;
+        {
+          if (!ostree_repo_get_remote_list_option (self, pull_data->remote_name,
+                                                  "sign-verify-summary", FALSE,
+                                                  &pull_data->sign_verify_summary, error))
+            goto out;
+        }
 
       /* NOTE: If changing this, see the matching implementation in
        * ostree-sysroot-upgrader.c

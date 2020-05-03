@@ -67,8 +67,8 @@ typedef struct {
 
   gboolean          gpg_verify;
   gboolean          gpg_verify_summary;
-  gboolean          sign_verify;
-  gboolean          sign_verify_summary;
+  char **           sign_verify;
+  char **           sign_verify_summary;
   gboolean          require_static_deltas;
   gboolean          disable_static_deltas;
   gboolean          has_tombstone_commits;

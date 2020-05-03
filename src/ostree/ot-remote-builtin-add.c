@@ -32,6 +32,7 @@ static gboolean opt_no_sign_verify;
 static gboolean opt_if_not_exists;
 static gboolean opt_force;
 static char *opt_gpg_import;
+static char **opt_verify_sign;
 static char *opt_contenturl;
 static char *opt_collection_id;
 static char *opt_sysroot;
@@ -46,6 +47,7 @@ static GOptionEntry option_entries[] = {
   { "set", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_set, "Set config option KEY=VALUE for remote", "KEY=VALUE" },
   { "no-gpg-verify", 0, 0, G_OPTION_ARG_NONE, &opt_no_gpg_verify, "Disable GPG verification", NULL },
   { "no-sign-verify", 0, 0, G_OPTION_ARG_NONE, &opt_no_sign_verify, "Disable signature verification", NULL },
+  { "verify-sign", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_verify_sign, "Verify signatures of TYPE with public key PUBKEY", "TYPE=PUBKEY" },
   { "if-not-exists", 0, 0, G_OPTION_ARG_NONE, &opt_if_not_exists, "Do nothing if the provided remote exists", NULL },
   { "force", 0, 0, G_OPTION_ARG_NONE, &opt_force, "Replace the provided remote if it exists", NULL },
   { "gpg-import", 0, 0, G_OPTION_ARG_FILENAME, &opt_gpg_import, "Import GPG key from FILE", "FILE" },
@@ -143,10 +145,21 @@ ot_remote_builtin_add (int argc, char **argv, OstreeCommandInvocation *invocatio
                            g_variant_new_variant (g_variant_new_boolean (FALSE)));
 #endif /* OSTREE_DISABLE_GPGME */
 
-  if (opt_no_sign_verify)
-    g_variant_builder_add (optbuilder, "{s@v}",
-                           "sign-verify",
-                           g_variant_new_variant (g_variant_new_boolean (FALSE)));
+  for (char **iter = opt_verify_sign; iter && *iter; iter++)
+    {
+      const char *it = *iter;
+      g_auto(GStrv) parts = g_strsplit (it, '=', 2);
+      const char *keytype = parts[0];
+      g_assert (keytype);
+      const char *key = parts[1];
+      if (!key)
+        return glnx_throw (error, "Missing = in --verify-sign");
+      g_autoptr(OstreeSign) sign = ostree_sign_get_by_name (keytype);
+      if (!sign)
+        return glnx_throw (error, "No such key type: %s", sign)
+      
+      FIXME add remote options
+    }
 
   if (opt_collection_id != NULL)
     g_variant_builder_add (optbuilder, "{s@v}", "collection-id",
