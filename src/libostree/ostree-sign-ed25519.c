@@ -29,6 +29,8 @@
 #include "ostree-sign-ed25519.h"
 #ifdef HAVE_LIBSODIUM
 #include <sodium.h>
+#elif HAVE_OPENSSL
+#include <openssl/evp.h>
 #endif
 
 #undef G_LOG_DOMAIN
@@ -98,6 +100,8 @@ _ostree_sign_ed25519_init (OstreeSignEd25519 *self)
 #ifdef HAVE_LIBSODIUM
   if (sodium_init() < 0)
       self->state = ED25519_FAILED_INITIALIZATION;
+#elif defined(HAVE_OPENSSL)
+  self->state = ED25519_OK;
 #else
   self->state = ED25519_NOT_SUPPORTED;
 #endif /* HAVE_LIBSODIUM */
@@ -129,10 +133,6 @@ gboolean ostree_sign_ed25519_data (OstreeSign *self,
   g_return_val_if_fail (OSTREE_IS_SIGN (self), FALSE);
   OstreeSignEd25519 *sign = _ostree_sign_ed25519_get_instance_private(OSTREE_SIGN_ED25519(self));
 
-#ifdef HAVE_LIBSODIUM
-  guchar *sig = NULL;
-#endif
-
   if (!_ostree_sign_ed25519_is_initialized (sign, error))
       return FALSE;
 
@@ -140,6 +140,7 @@ gboolean ostree_sign_ed25519_data (OstreeSign *self,
     return glnx_throw (error, "Not able to sign: secret key is not set");
 
 #ifdef HAVE_LIBSODIUM
+  guchar *sig = NULL;
   unsigned long long sig_size = 0;
 
   sig = g_malloc0(crypto_sign_BYTES);
@@ -155,7 +156,13 @@ gboolean ostree_sign_ed25519_data (OstreeSign *self,
 
   *signature = g_bytes_new_take (sig, sig_size);
   return TRUE;
-#endif /* HAVE_LIBSODIUM */
+#elif defined(HAVE_OPENSSL)
+  size_t siglen = 0;
+  EVP_MD_CTX *mctx = EVP_MD_CTX_new();
+  g_assert (mctx);  /* GLib aborts on OOM */
+  g_assert (EVP_DigestSignInit (mctx, NULL, NULL, )
+  return TRUE;
+#endif
   return FALSE;
 }
 
