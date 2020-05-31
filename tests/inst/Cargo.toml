@@ -6,17 +6,21 @@ edition = "2018"
 
 [[bin]]
 name = "ostree-test"
-path = "src/insttest.rs"
+path = "src/insttestmain.rs"
 
 [dependencies]
 clap = "2.32.0"
-structopt = "0.2"
+structopt = "0.3"
+serde = "1.0.111"
+serde_derive = "1.0.111"
+serde_json = "1.0"
 commandspec = "0.12.2"
 anyhow = "1.0"
 tempfile = "3.1.0"
+glib = "0.9.1"
 gio = "0.8"
 ostree = { version = "0.7.1", features = ["v2020_1"] }
-libtest-mimic = "0.2.0"
+libtest-mimic = "0.3.0"
 twoway = "0.2.1"
 hyper = "0.13"
 futures = "0.3.4"
@@ -29,7 +33,14 @@ procspawn = "0.8"
 proc-macro2 = "0.4"
 quote = "0.6"
 syn = "0.15"
+rand = "0.7.3"
 linkme = "0.2"
+openat = "0.1.19"
+openat-ext = "0.1.4"
+
+indexmap = "1.5.0"
+nix = "0.17.0"
+libc = "0.2"
 
 itest-macro = { path = "itest-macro" }
 
@@ -39,4 +50,3 @@ with-procspawn-tempdir = { git = "https://github.com/cgwalters/with-procspawn-te
 # See https://github.com/tcr/commandspec/pulls?q=is%3Apr+author%3Acgwalters+
 [patch.crates-io]
 commandspec = { git = "https://github.com/cgwalters/commandspec", branch = 'walters-master' }
-#commandspec = { path = "/var/srv/walters/src/github/tcr/commandspec" }
