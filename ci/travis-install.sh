@@ -62,6 +62,9 @@ else
     sudo=sudo
 fi
 
+# debconf isn't going to work
+export DEBIAN_FRONTEND=noninteractive
+
 if [ -n "$ci_docker" ]; then
     sed \
         -e "s,@ci_distro@,${ci_distro}," \
