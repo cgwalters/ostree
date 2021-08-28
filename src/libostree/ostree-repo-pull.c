@@ -3328,30 +3328,28 @@ _ostree_preload_metadata_file (OstreeRepo    *self,
 
 static gboolean
 fetch_mirrorlist (OstreeFetcher  *fetcher,
-                  const char     *mirrorlist_url,
+                  OstreeFetcherURI  *mirrorlist,
                   guint           n_network_retries,
                   GPtrArray     **out_mirrorlist,
                   GCancellable   *cancellable,
                   GError        **error)
 {
+  g_autofree char *mirrorlist_str = _ostree_fetcher_uri_to_string (mirrorlist);
   g_autoptr(GPtrArray) ret_mirrorlist =
     g_ptr_array_new_with_free_func ((GDestroyNotify) _ostree_fetcher_uri_free);
-
-  g_autoptr(OstreeFetcherURI) mirrorlist = _ostree_fetcher_uri_parse (mirrorlist_url, error);
-  if (!mirrorlist)
-    return FALSE;
 
   g_autofree char *contents = NULL;
   if (!fetch_uri_contents_utf8_sync (fetcher, mirrorlist, n_network_retries,
                                      &contents, cancellable, error))
-    return glnx_prefix_error (error, "While fetching mirrorlist '%s'",
-                              mirrorlist_url);
+    {
+      return glnx_prefix_error (error, "While fetching mirrorlist '%s'", mirrorlist_str);
+    }
 
   /* go through each mirror in mirrorlist and do a quick sanity check that it
    * works so that we don't waste the fetcher's time when it goes through them
    * */
   g_auto(GStrv) lines = g_strsplit (contents, "\n", -1);
-  g_debug ("Scanning mirrorlist from '%s'", mirrorlist_url);
+  g_debug ("Scanning mirrorlist from '%s'", mirrorlist_str);
   for (char **iter = lines; iter && *iter; iter++)
     {
       const char *mirror_uri_str = *iter;
@@ -3407,10 +3405,35 @@ fetch_mirrorlist (OstreeFetcher  *fetcher,
 
   if (ret_mirrorlist->len == 0)
     return glnx_throw (error, "No valid mirrors were found in mirrorlist '%s'",
-                       mirrorlist_url);
+                       mirrorlist_str);
 
   *out_mirrorlist = g_steal_pointer (&ret_mirrorlist);
   return TRUE;
+}
+
+// Given the URL for a remote, possibly prefixed with mirrorlist=,
+// split it into (is_mirrorlist, URL).
+static gboolean
+split_remote_url (const char *remoteurl,
+                  gboolean   *out_is_mirrorlist,
+                  OstreeFetcherURI **out_url,
+                  GError    **error)
+{
+  gboolean is_mirrorlist = g_str_has_prefix (remoteurl, "mirrorlist=");
+  *out_is_mirrorlist = is_mirrorlist;
+  const char *url = NULL;
+  if (is_mirrorlist)
+    {
+      url = remoteurl + strlen ("mirrorlist=");
+    }
+  else
+    {
+      url = remoteurl;
+    }
+  *out_url = _ostree_fetcher_uri_parse (url, error);
+  if (!_ostree_fetcher_uri_validate (*out_url, error))
+    return FALSE;
+  return *out_url != NULL;
 }
 
 static gboolean
@@ -3430,10 +3453,15 @@ compute_effective_mirrorlist (OstreeRepo    *self,
   else if (!ostree_repo_remote_get_url (self, remote_name_or_baseurl, &baseurl, error))
     return FALSE;
 
-  if (g_str_has_prefix (baseurl, "mirrorlist="))
+  gboolean is_mirrorlist = FALSE;
+  g_autoptr(OstreeFetcherURI) remote_uri = NULL;
+  if (!split_remote_url (baseurl, &is_mirrorlist, &remote_uri, error))
+    return FALSE;
+
+  if (is_mirrorlist)
     {
       if (!fetch_mirrorlist (fetcher,
-                             baseurl + strlen ("mirrorlist="),
+                             remote_uri,
                              n_network_retries,
                              out_mirrorlist,
                              cancellable, error))
@@ -3441,17 +3469,9 @@ compute_effective_mirrorlist (OstreeRepo    *self,
     }
   else
     {
-      g_autoptr(OstreeFetcherURI) baseuri = _ostree_fetcher_uri_parse (baseurl, error);
-
-      if (!baseuri)
-        return FALSE;
-
-      if (!_ostree_fetcher_uri_validate (baseuri, error))
-        return FALSE;
-
       *out_mirrorlist =
         g_ptr_array_new_with_free_func ((GDestroyNotify) _ostree_fetcher_uri_free);
-      g_ptr_array_add (*out_mirrorlist, g_steal_pointer (&baseuri));
+      g_ptr_array_add (*out_mirrorlist, g_steal_pointer (&remote_uri));
     }
   return TRUE;
 }
@@ -6854,3 +6874,96 @@ ostree_repo_pull_from_remotes_finish (OstreeRepo    *self,
 }
 
 #endif /* HAVE_LIBCURL_OR_LIBSOUP */
+
+static void
+on_can_reach (GObject       *obj,
+              GAsyncResult  *result,
+              gpointer       user_data)
+{
+  GTask *task = user_data;
+  g_autoptr(GError) local_error = NULL;
+  if (!g_network_monitor_can_reach_finish ((GNetworkMonitor*)obj, result, &local_error))
+    g_task_return_error (task, g_steal_pointer (&local_error));
+  else
+    g_task_return_boolean (task, TRUE);
+}
+
+/**
+ * ostree_repo_can_reach_remote_async:
+ * @self: Repo
+ * @remote_name: Name of remote
+ * @cancellable: Cancellable
+ * @callback: Invoked when reachability is computed
+ * @user_data: Data for @callback
+ *
+ * For remotes that use `file://`, this asynchronously returns `TRUE`.
+ * For `https://` remotes, this wraps `g_network_monitor_can_reach_async()`
+ * on the remote host.
+ *
+ * It can be a good idea to invoke this before calling `ostree_repo_pull()`
+ * because it will more efficiently
+ */
+void
+ostree_repo_can_reach_remote_async (OstreeRepo              *self,
+                                    const char              *remote_name,
+                                    GCancellable            *cancellable,
+                                    GAsyncReadyCallback      callback,
+                                    gpointer                 user_data)
+{
+  g_autofree char *baseurl = NULL;
+  g_autoptr(GError) local_error = NULL;
+
+  g_autoptr(GTask) task = g_task_new (self, cancellable, callback, user_data);
+  g_task_set_source_tag (task, ostree_repo_can_reach_remote_async);
+  g_task_set_task_data (task, g_strdup (remote_name), (GDestroyNotify) g_free);
+
+  if (!ostree_repo_remote_get_url (self, remote_name, &baseurl, &local_error))
+    {
+      g_task_return_error (task, g_steal_pointer (&local_error));
+      return;
+    }
+  gboolean is_mirrorlist = FALSE;
+  g_autoptr(OstreeFetcherURI) remote_url = NULL;
+  if (!split_remote_url (baseurl, &is_mirrorlist, &remote_url, &local_error))
+    {
+      g_task_return_error (task, g_steal_pointer (&local_error));
+      return;
+    }
+
+  g_autofree char *scheme = _ostree_fetcher_uri_get_scheme (remote_url);
+  if (g_str_equal (scheme, "file"))
+    {
+      g_task_return_boolean (task, TRUE);
+      return;
+    }
+  g_assert (g_str_equal (scheme, "http") || (g_str_equal (scheme, "https")));
+#ifdef HAVE_LIBCURL_OR_LIBSOUP
+
+  g_autoptr(GSocketConnectable) host = g_network_address_parse_uri (baseurl, 80, &local_error);
+  if (!host)
+    {
+      g_task_return_error (task, g_steal_pointer (&local_error));
+      return;
+    }
+
+  GNetworkMonitor *mon = g_network_monitor_get_default ();
+  g_network_monitor_can_reach_async (mon, host, cancellable, on_can_reach, g_object_ref (task));  
+
+#else
+  g_task_report_new_error (self, callback, user_data, ostree_repo_wait_remote_async,
+                           G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                           "This version of ostree was built without libsoup or libcurl, and cannot fetch over HTTP");
+#endif
+}
+
+gboolean
+ostree_repo_can_reach_remote_finish (OstreeRepo        *self,
+                                     GAsyncResult      *result,
+                                     GError           **error)
+{
+  GTask *task = (GTask*)result;
+  const char *remote_name = g_task_get_task_data (task);
+  if (!g_task_propagate_boolean (task, error))
+    return glnx_prefix_error (error, "Cannot reach remote '%s'", remote_name);
+  return TRUE;
+}

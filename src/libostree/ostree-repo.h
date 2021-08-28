@@ -1389,6 +1389,18 @@ gboolean ostree_repo_list_collection_refs (OstreeRepo                 *self,
                                            GError                     **error);
 
 _OSTREE_PUBLIC
+void ostree_repo_can_reach_remote_async (OstreeRepo              *self,
+                                         const char              *remote_name,
+                                         GCancellable            *cancellable,
+                                         GAsyncReadyCallback      callback,
+                                         gpointer                 user_data);
+
+_OSTREE_PUBLIC
+gboolean      ostree_repo_can_reach_remote_finish (OstreeRepo        *self,
+                                                   GAsyncResult      *result,
+                                                   GError           **error);
+
+_OSTREE_PUBLIC
 void ostree_repo_pull_default_console_progress_changed (OstreeAsyncProgress *progress,
                                                         gpointer             user_data);
 
