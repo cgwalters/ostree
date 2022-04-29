@@ -3542,7 +3542,9 @@ ostree_repo_open (OstreeRepo    *self,
    * where if the ${BOOT_ID} doesn't match, we know file contents
    * possibly haven't been sync'd to disk and need to be discarded.
    */
-  { const char *env_bootid = getenv ("OSTREE_BOOTID");
+  if (self->stagedir_prefix == NULL)
+    { 
+    const char *env_bootid = getenv ("OSTREE_BOOTID");
     g_autofree char *boot_id = NULL;
 
     if (env_bootid != NULL)
@@ -3573,6 +3575,7 @@ ostree_repo_open (OstreeRepo    *self,
   self->device = stbuf.st_dev;
   self->inode = stbuf.st_ino;
 
+  glnx_close_fd (&self->objects_dir_fd);
   if (!glnx_opendirat (self->repo_dir_fd, "objects", TRUE,
                        &self->objects_dir_fd, error))
     return FALSE;
@@ -3603,6 +3606,7 @@ ostree_repo_open (OstreeRepo    *self,
         }
     }
 
+  glnx_close_fd (&self->tmp_dir_fd);
   if (!glnx_opendirat (self->repo_dir_fd, "tmp", TRUE, &self->tmp_dir_fd, error))
     return FALSE;
 
@@ -6791,5 +6795,82 @@ _ostree_repo_verify_bindings (const char  *collection_id,
                            collection_id_binding, collection_id);
     }
 
+  return TRUE;
+}
+
+
+/* If we're running as root, booted into an OSTree system and have a read-only
+ * /sysroot, then assume we may need write access.  Create a new mount namespace
+ * if so, and return *out_ns = TRUE.  Otherwise, *out_ns = FALSE.
+ */
+static gboolean
+maybe_setup_mount_namespace (gboolean    *out_ns,
+                             GError     **error)
+{
+  *out_ns = FALSE;
+
+  /* If we're not root, then we almost certainly can't be remounting anything */
+  if (getuid () != 0)
+    return TRUE;
+
+  /* If the system isn't booted via libostree, also nothing to do */
+  if (!glnx_fstatat_allow_noent (AT_FDCWD, OSTREE_PATH_BOOTED, NULL, 0, error))
+    return FALSE;
+  if (errno == ENOENT)
+    return TRUE;
+
+  if (unshare (CLONE_NEWNS) < 0)
+    return glnx_throw_errno_prefix (error, "setting up mount namespace: unshare(CLONE_NEWNS)");
+
+  *out_ns = TRUE;
+  return TRUE;
+}
+
+/**
+ * ostree_repo_maybe_create_mount_namespace:
+ * @self: A repository
+ * @out_created_ns: (out): Set if a mount namespace was created
+ * @error: Error
+ *
+ * If the target repository is a system repository, but not writable,
+ * and we are running as root, it's likely there's a read-only bind
+ * mount on /sysroot.  Create a new mount namespace and ensure /sysroot
+ * is writable if so.  In this case, `@out_ns` is set to TRUE.
+ *
+ * Since: 2022.3
+ */
+gboolean          
+ostree_repo_maybe_create_mount_namespace (OstreeRepo   *repo,
+                                          gboolean     *out_created_ns,
+                                          GError      **error);
+{
+  if (out_created_ns)
+    *out_created_ns = FALSE;
+  /* This is a bit of a brutal hack; we set up a mount
+   * namespace if it appears that we may need it.  It'd
+   * be better to do this more precisely in the future.
+   */
+  if (ostree_repo_is_system (self) && !ostree_repo_is_writable (self, NULL))
+    {
+      gboolean setup_ns = FALSE;
+      if (!maybe_setup_mount_namespace (&setup_ns, error))
+        return FALSE;
+      if (setup_ns)
+        {
+          if (mount ("/sysroot", "/sysroot", NULL, MS_REMOUNT | MS_SILENT, NULL) < 0)
+            return glnx_null_throw_errno_prefix (error, "Remounting /sysroot read-write");
+
+          /* At this point, we need to reinitialize our file descriptors, which are still
+           * pointing to the old filesystem view.
+           */
+          repo->inited = FALSE;
+          glnx_autofd int old_fd = glnx_steal_fd (&repo->repo_dir_fd);
+          if (!glnx_openatdirat (old_fd, ".", FALSE, &repo_repo_dir_fd, error))
+            return FALSE;
+          if (!ostree_repo_open (repo, NULL, error))
+            return FALSE;
+          *out_created_ns = TRUE;
+        }
+    }
   return TRUE;
 }

@@ -71,6 +71,11 @@ ostree_repo_open_at (int           dfd,
                      GError      **error);
 
 _OSTREE_PUBLIC
+gboolean          ostree_repo_maybe_create_mount_namespace (OstreeRepo   *repo,
+                                                            gboolean     *out_created_ns,
+                                                            GError      **error);
+
+_OSTREE_PUBLIC
 void          ostree_repo_set_disable_fsync (OstreeRepo    *self,
                                              gboolean       disable_fsync);
 
