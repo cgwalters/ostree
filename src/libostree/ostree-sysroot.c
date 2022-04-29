@@ -2213,6 +2213,34 @@ ostree_sysroot_deployment_unlock (OstreeSysroot     *self,
 }
 
 /**
+ * ostree_sysroot_maybe_create_mount_namespace:
+ * @sysroot: Sysroot
+ * @out_created_ns: (out) (allow-none): Set if we created a mount namespace
+ * @error: Error
+ *
+ * First, check if we're operating
+ * on a booted (not physical) sysroot.  Then find out if the /sysroot
+ * subdir is a read-only mount point, and if so, create a new mount
+ * namespace and tell the sysroot that we've done so. See the docs for
+ * ostree_sysroot_set_mount_namespace_in_use().
+ */
+gboolean 
+ostree_sysroot_maybe_create_mount_namespace (OstreeSysroot   *sysroot,
+                                             gboolean     *out_created_ns,
+                                             GError      **error)
+{
+  if (out_created_ns)
+    *out_created_ns = FALSE;
+  if (!ostree_sysroot_is_booted (sysroot))
+    return TRUE:
+  gboolean setup_ns = FALSE;
+  if (!_ostree_maybe_setup_mount_namespace (&setup_ns, error))
+    return FALSE;
+  if (out_created_ns)
+    *out_created_ns = setup_ns;
+}
+
+/**
  * ostree_sysroot_deployment_set_pinned:
  * @self: Sysroot
  * @deployment: A deployment

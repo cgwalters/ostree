@@ -6803,9 +6803,9 @@ _ostree_repo_verify_bindings (const char  *collection_id,
  * /sysroot, then assume we may need write access.  Create a new mount namespace
  * if so, and return *out_ns = TRUE.  Otherwise, *out_ns = FALSE.
  */
-static gboolean
-maybe_setup_mount_namespace (gboolean    *out_ns,
-                             GError     **error)
+gboolean
+_ostree_maybe_setup_mount_namespace (gboolean    *out_ns,
+                                     GError     **error)
 {
   *out_ns = FALSE;
 

@@ -571,23 +571,9 @@ ostree_admin_option_context_parse (GOptionContext *context,
 
   if ((flags & OSTREE_ADMIN_BUILTIN_FLAG_UNLOCKED) == 0)
     {
-      /* If we're requested to lock the sysroot, first check if we're operating
-       * on a booted (not physical) sysroot.  Then find out if the /sysroot
-       * subdir is a read-only mount point, and if so, create a new mount
-       * namespace and tell the sysroot that we've done so. See the docs for
-       * ostree_sysroot_set_mount_namespace_in_use().
-       *
-       * This is a conservative approach; we could just always
-       * unshare() too.
-       */
-      if (ostree_sysroot_is_booted (sysroot))
-        {
-          gboolean setup_ns = FALSE;
-          if (!maybe_setup_mount_namespace (&setup_ns, error))
-            return FALSE;
-          if (setup_ns)
-            ostree_sysroot_set_mount_namespace_in_use (sysroot);
-        }
+      /* We need to handle readonly /sysroot */
+      if (!ostree_sysroot_maybe_create_mount_namespace (sysroot, NULL, error))
+        return FALSE;
 
       /* Released when sysroot is finalized, or on process exit */
       if (!ot_admin_sysroot_lock (sysroot, error))

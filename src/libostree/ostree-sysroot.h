@@ -48,6 +48,20 @@ _OSTREE_PUBLIC
 OstreeSysroot* ostree_sysroot_new_default (void);
 
 _OSTREE_PUBLIC
+ /* If we're requested to lock the sysroot, first check if we're operating
+       * on a booted (not physical) sysroot.  Then find out if the /sysroot
+       * subdir is a read-only mount point, and if so, create a new mount
+       * namespace and tell the sysroot that we've done so. See the docs for
+       * ostree_sysroot_set_mount_namespace_in_use().
+       *
+       * This is a conservative approach; we could just always
+       * unshare() too.
+       */
+gboolean ostree_sysroot_maybe_create_mount_namespace (OstreeSysroot   *sysroot,
+                                                      gboolean     *out_created_ns,
+                                                      GError      **error);
+
+_OSTREE_PUBLIC
 void ostree_sysroot_set_mount_namespace_in_use (OstreeSysroot  *self);
 
 _OSTREE_PUBLIC

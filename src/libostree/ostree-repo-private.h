@@ -513,6 +513,10 @@ _ostree_repo_verify_bindings (const char  *collection_id,
                               GVariant    *commit,
                               GError     **error);
 
+gboolean
+_ostree_maybe_setup_mount_namespace (gboolean    *out_ns,
+                                     GError     **error);
+
 /**
  * OstreeRepoAutoTransaction:
  *
