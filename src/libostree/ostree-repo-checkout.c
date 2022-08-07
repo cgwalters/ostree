@@ -32,8 +32,7 @@
 #include "ostree-core-private.h"
 #include "ostree-repo-private.h"
 
-#define WHITEOUT_PREFIX ".wh."
-#define OPAQUE_WHITEOUT_NAME ".wh..wh..opq"
+
 
 /* Per-checkout call state/caching */
 typedef struct {
@@ -626,8 +625,10 @@ checkout_one_file_at (OstreeRepo                        *repo,
   const gboolean is_reg_zerosized = (!is_symlink && g_file_info_get_size (source_info) == 0);
   const gboolean override_user_unreadable = (options->mode == OSTREE_REPO_CHECKOUT_MODE_USER && is_unreadable);
 
-  /* First, see if it's a Docker whiteout,
+  /* First, see if it's an OCI/Docker whiteout,
    * https://github.com/docker/docker/blob/1a714e76a2cb9008cd19609059e9988ff1660b78/pkg/archive/whiteouts.go
+   * https://github.com/opencontainers/image-spec/blob/main/layer.md#whiteouts
+   * There is also similar code in ostree-repo-commit.c - if changing this, consider changing that too.
    */
   if (is_whiteout)
     {

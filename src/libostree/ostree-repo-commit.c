@@ -3672,6 +3672,25 @@ write_content_to_mtree_internal (OstreeRepo                  *self,
   const gboolean delete_after_commit = dfd_iter && modifier &&
     (modifier->flags & OSTREE_REPO_COMMIT_MODIFIER_FLAGS_CONSUME);
 
+  /* Handle Docker/OCI whiteouts.
+   * There is also similar code in ostree-repo-checkout.c - if changing this, consider changing that too.
+   */
+  const gboolean is_whiteout = \
+    file_type == G_FILE_TYPE_REGULAR && g_str_has_prefix (name, WHITEOUT_PREFIX);
+  const gboolean process_whiteouts = (modifier->flags & OSTREE_REPO_COMMIT_MODIFIER_FLAGS_PROCESS_WHITEOUTS) > 0;
+  if (process_whiteouts && is_whiteout)
+    {
+      const char *name = destination_name + (sizeof (WHITEOUT_PREFIX) - 1);
+
+      if (!name[0])
+        return glnx_throw (error, "Invalid empty whiteout '%s'", name);
+
+      g_assert (name[0] != '/'); /* Sanity */
+
+      if (!ostree_mutable_tree_remove (mtree, name, TRUE, error))
+        return glnx_prefix_error (error, "Processing whiteout %s", name);
+    }
+
   /* See if we have a devino hit; this is used below in a few places. */
   const char *loose_checksum = NULL;
   if (dfd_iter != NULL)
