@@ -23,9 +23,5 @@ pkg_install sudo which attr fuse strace \
 if test -n "${CI_PKGS:-}"; then
     pkg_install ${CI_PKGS}
 fi
-pkg_install_if_os fedora gjs gnome-desktop-testing parallel coccinelle clang \
-                  python3-PyYAML
-if test "${OS_ID}" = "centos"; then
-    rpm -Uvh https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
-    pkg_install python34{,-PyYAML}
-fi
+pkg_install python3 gjs python3-PyYAML
+pkg_install_if_os fedora gnome-desktop-testing parallel coccinelle clang
