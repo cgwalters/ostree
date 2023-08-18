@@ -1,9 +1,12 @@
-use anyhow::{bail, Result};
+use std::process::Command;
+
+use anyhow::{bail, Result, anyhow};
 use libtest_mimic::Trial;
 use structopt::StructOpt;
 
 mod composefs;
 mod destructive;
+mod prepareroot;
 mod repobin;
 mod sysroot;
 mod test;
@@ -31,6 +34,9 @@ const TESTS: &[StaticTest] = &[
     test!(repobin::itest_extensions),
     test!(repobin::itest_pull_basicauth),
 ];
+const NONDESTRUCTIVE_PRIVILEGED_TESTS: &[StaticTest] = &[//test!(prepareroot::itest_basic),
+test!(prepareroot::itest_composefs)];
+
 const DESTRUCTIVE_TESTS: &[StaticTest] = &[
     test!(destructive::itest_transactionality),
     test!(composefs::itest_composefs),
@@ -45,6 +51,8 @@ enum Opt {
     ListDestructive,
     /// Run a destructive test (requires ostree-based host, may break it!)
     RunDestructive { name: String },
+    /// Run tests which require real root, but are not destructive
+    NonDestructivePrivileged { name: Option<String> },
     /// Run the non-destructive tests
     NonDestructive(NonDestructiveOpts),
 }
@@ -55,6 +63,13 @@ enum NonDestructiveOpts {
     #[structopt(external_subcommand)]
     Args(Vec<String>),
 }
+
+// Maybe this is useful in the future
+// fn nested_container_capable() -> Result<bool> {
+//     let st = Command::new(UNSHARE_ARGS[0])
+//         .args(&UNSHARE_ARGS[1..]).status()?;
+//     Ok(st.success())
+// }
 
 fn main() -> Result<()> {
     // Ensure we're always in tempdir so we can rely on it globally.
@@ -92,6 +107,28 @@ fn main() -> Result<()> {
                 .map(|(name, fun)| Trial::test(*name, move || fun().map_err(Into::into)))
                 .collect();
             libtest_mimic::run(&libtestargs, tests).exit();
+        }
+        Opt::NonDestructivePrivileged { name } => {
+            let mut n = 0usize;
+            if let Some(name) = name.as_deref() {
+                let (name, f) = NONDESTRUCTIVE_PRIVILEGED_TESTS.iter().find(|(tname, _)| *tname == name).ok_or_else(|| anyhow!("Unknown test {name}"))?;
+                f()?;
+                println!("ok {name}");
+            } else {
+                for (name, _) in NONDESTRUCTIVE_PRIVILEGED_TESTS {
+                    // We always exec a new process for each one of these to ensure a clean state
+                    let st = Command::new("/proc/self/exe")
+                        .args(std::env::args().skip(1))
+                        .arg(name)
+                        .status()?;
+                    if !st.success() {
+                        anyhow::bail!("failed: {name}");
+                    }
+                    n += 1;
+                }
+            }
+            println!("ok ran {n} tests");
+            Ok(())
         }
         Opt::RunDestructive { name } => {
             if !std::path::Path::new(DESTRUCTIVE_TEST_STAMP).exists() {
