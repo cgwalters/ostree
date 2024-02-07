@@ -3346,6 +3346,14 @@ reload_sysroot_config (OstreeRepo *self, GCancellable *cancellable, GError **err
       g_hash_table_replace (self->bls_append_values, key, value);
     }
 
+  const gboolean default_bootprefix =
+#if defined(__s390x__)
+    FALSE
+#else
+    TRUE
+#endif
+  ;
+
   if (!ot_keyfile_get_boolean_with_default (self->config, "sysroot", "bootprefix", TRUE,
                                             &self->enable_bootprefix, error))
     return FALSE;

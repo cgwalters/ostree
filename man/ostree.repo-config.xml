@@ -429,9 +429,8 @@ License along with this library. If not, see <https://www.gnu.org/licenses/>.
 
       <varlistentry>
         <term><varname>bootprefix</varname></term>
-        <listitem><para>A boolean value; defaults to false.  If set to true, the bootloader entries
-        generated will include <literal>/boot</literal> as a prefix.  This will likely be turned
-        on by default in the future.
+        <listitem><para>A boolean value; defaults to true (currently except on s390x).  If set to true, the bootloader entries
+        generated will include <literal>/boot</literal> as a prefix.
         </para>
         </listitem>
       </varlistentry>
