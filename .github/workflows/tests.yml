@@ -32,7 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Cache Dependencies
-        uses: Swatinem/rust-cache@ce325b60658c1b38465c06cc965b79baf32c1e72
+        uses: Swatinem/rust-cache@640a22190e7a783d4c409684cea558f081f92012
         with:
           key: "integration"
       - name: Build
