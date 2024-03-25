@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Cache Dependencies
-        uses: Swatinem/rust-cache@ce325b60658c1b38465c06cc965b79baf32c1e72
+        uses: Swatinem/rust-cache@f7a52f691454d93c6ce0dff6666a5cb399b8d06e
       - name: cargo fmt (check)
         run: cargo fmt -p ostree -- --check -l
       - name: Build
@@ -53,7 +53,7 @@ jobs:
           toolchain: ${{ env['ACTION_MSRV_TOOLCHAIN']  }}
           default: true
       - name: Cache Dependencies
-        uses: Swatinem/rust-cache@ce325b60658c1b38465c06cc965b79baf32c1e72
+        uses: Swatinem/rust-cache@f7a52f691454d93c6ce0dff6666a5cb399b8d06e
       - name: cargo check
         run: cargo check --features=${{ env['CARGO_PROJECT_FEATURES'] }}
   build-no-features:
@@ -62,7 +62,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Cache Dependencies
-        uses: Swatinem/rust-cache@ce325b60658c1b38465c06cc965b79baf32c1e72
+        uses: Swatinem/rust-cache@f7a52f691454d93c6ce0dff6666a5cb399b8d06e
       - name: Build
         run: cargo test --no-run
       - name: Run tests
@@ -76,7 +76,7 @@ jobs:
           fetch-depth: 0
           submodules: true
       - name: Cache Dependencies
-        uses: Swatinem/rust-cache@ce325b60658c1b38465c06cc965b79baf32c1e72
+        uses: Swatinem/rust-cache@f7a52f691454d93c6ce0dff6666a5cb399b8d06e
       - name: Build libostree
         run: ./ci/build.sh
       - name: Install libostree
