@@ -16,7 +16,6 @@ jobs:
   docs:
     name: Build documentation
     runs-on: ubuntu-latest
-    container: registry.ci.openshift.org/coreos/fcos-buildroot:testing-devel
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -27,7 +26,7 @@ jobs:
       # This is taken from ci/travis-install.sh but should probably be
       # refactored.
       - name: Install dependencies
-        run: ./ci/installdeps.sh
+        run: sudo ./ci/gh-install.sh
 
       - name: Build API docs and manpages
         run: |
