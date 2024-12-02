@@ -22,7 +22,7 @@ jobs:
       # has podman and buildah from ~2021 (insane!)
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Build and export to Docker
         uses: docker/build-push-action@v5
         with:
