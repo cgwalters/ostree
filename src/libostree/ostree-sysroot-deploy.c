@@ -2206,6 +2206,53 @@ install_deployment_kernel (OstreeSysroot *sysroot, int new_bootversion,
   return TRUE;
 }
 
+/* Determine whether an existing directory implements the semantics described in
+ * https://uapi-group.org/specifications/specs/boot_loader_specification/#type-1-boot-loader-entry-keys
+ */
+static gboolean
+is_bootconfig_type1_semantics (OstreeSysroot *sysroot, GCancellable *cancellable, GError **error)
+{
+  struct stat stbuf;
+
+  if (!_ostree_sysroot_ensure_boot_fd (sysroot, error))
+    return FALSE;
+
+  if (!glnx_fstatat_allow_noent (sysroot->boot_fd, "loader/entries.srel", &stbuf,
+                                 AT_SYMLINK_NOFOLLOW, error))
+    return FALSE;
+
+  if (errno == ENOENT)
+    {
+      g_debug ("Didn't find loader/entries.srel file");
+      return FALSE;
+    }
+  else
+    {
+      /* Get semantics type by reading loader/entries.srel */
+      gsize len;
+      g_autofree char *type = glnx_file_get_contents_utf8_at (
+          sysroot->boot_fd, "loader/entries.srel", &len, cancellable, error);
+      if (type == NULL)
+        {
+          g_debug ("Invalid loader/entries.srel file");
+          return FALSE;
+        }
+
+      if (g_str_has_prefix (type, "type1"))
+        {
+          g_debug ("type1 semantics is found in loader/entries.srel file");
+          return TRUE;
+        }
+      else
+        {
+          g_debug ("Unsupported semantics type ('%s') in loader/entries.srel file", type);
+          return FALSE;
+        }
+    }
+
+  return FALSE;
+}
+
 /* We generate the symlink on disk, then potentially do a syncfs() to ensure
  * that it (and everything else we wrote) has hit disk. Only after that do we
  * rename it into place.
@@ -2301,7 +2348,6 @@ swap_bootloader (OstreeSysroot *sysroot, OstreeBootloader *bootloader, gboolean 
   if (!_ostree_sysroot_ensure_boot_fd (sysroot, error))
     return FALSE;
   g_assert_cmpint (sysroot->boot_fd, !=, -1);
-
 
   if (loader_link)
     {
@@ -2546,14 +2592,18 @@ write_deployments_bootswap (OstreeSysroot *self, GPtrArray *new_deployments,
    */
   struct stat stbuf;
   gboolean loader_link = FALSE;
+  gboolean force_type1_semantics = is_bootconfig_type1_semantics (self, cancellable, error);
   if (!self->boot_is_vfat)
     {
       if (!glnx_fstatat_allow_noent (self->sysroot_fd, "boot/loader", &stbuf, AT_SYMLINK_NOFOLLOW,
-                                 error))
+                                     error))
         return FALSE;
       if (!create_bootself_link (self, cancellable, error))
         return FALSE;
     }
+
+  if (force_type1_semantics && loader_link)
+    return glnx_throw_errno_prefix (error, "type1 semantics, but boot/loader is symlink");
 
   if (loader_link)
     {
