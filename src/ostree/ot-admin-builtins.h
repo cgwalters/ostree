@@ -41,6 +41,8 @@ BUILTINPROTO (cleanup);
 BUILTINPROTO (pin);
 BUILTINPROTO (finalize_staged);
 BUILTINPROTO (boot_complete);
+BUILTINPROTO (prepare_soft_reboot);
+BUILTINPROTO (impl_prepare_soft_reboot);
 BUILTINPROTO (unlock);
 BUILTINPROTO (status);
 BUILTINPROTO (set_origin);
@@ -50,7 +52,6 @@ BUILTINPROTO (kargs);
 BUILTINPROTO (post_copy);
 BUILTINPROTO (lock_finalization);
 BUILTINPROTO (state_overlay);
-BUILTINPROTO (prepare_soft_reboot);
 // Defined manually since "switch" is a keyword and that totally confuses clang-format
 gboolean ot_admin_builtin_switch (int argc, char **argv, OstreeCommandInvocation *invocation,
                                   GCancellable *cancellable, GError **error);

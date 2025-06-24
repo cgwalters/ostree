@@ -4263,7 +4263,7 @@ ostree_sysroot_deployment_set_mutable (OstreeSysroot *self, OstreeDeployment *de
 
 struct PrepareRootChildSetupContext
 {
-  int deployment_dfd;
+  const char *deployment_path;
   int rootns_fd;
 };
 
@@ -4276,9 +4276,9 @@ prepare_root_child_setup (gpointer data)
   if (rc < 0)
     err (1, "setns");
   // Then change to the deployment directory in the root namespace
-  rc = fchdir (ctx->deployment_dfd);
+  rc = chdir (ctx->deployment_path);
   if (rc < 0)
-    err (1, "fchdir");
+    err (1, "chdir");
 }
 
 /**
@@ -4318,45 +4318,43 @@ ostree_sysroot_deployment_prepare_next_root (OstreeSysroot *self, OstreeDeployme
               target_bootcsum, booted_bootcsum);
         }
     }
-  
+
   // For targeting a staged deployment, we finalize now to ensure that we have /etc
-  if (ostree_deployment_is_staged (deployment)) 
+  if (ostree_deployment_is_staged (deployment))
     {
       if (!_ostree_sysroot_finalize_staged (self, NULL, error))
         return FALSE;
     }
 
-  g_autofree char *deployment_path = ostree_sysroot_get_deployment_dirpath (self, deployment);
+  g_autofree char *deployment_relpath = ostree_sysroot_get_deployment_dirpath (self, deployment);
+  g_autofree char *deployment_fullpath = g_build_filename ("/sysroot", deployment_relpath, NULL);
   gint estatus;
 
-  glnx_autofd int deployment_dfd = -1;
-  // For soft-reboot, we need to access the real deployment directory, not through overlayfs
-  // Open the deployment directory from the real sysroot path
-  g_autofree char *real_sysroot_path = realpath (gs_file_get_path_cached (self->path), NULL);
-  if (!real_sysroot_path)
-    return glnx_throw_errno_prefix (error, "realpath(sysroot)");
-  
-  g_autofree char *real_deployment_path = g_build_filename (real_sysroot_path, deployment_path, NULL);
-  if (!glnx_opendirat (AT_FDCWD, real_deployment_path, FALSE, &deployment_dfd, error))
-    return FALSE;
-
-  const char *argv[] = { "/usr/lib/ostree/ostree-prepare-root", "--soft-reboot", NULL };
+  const char *argv[] = { "ostree", "admin", "impl-prepare-soft-reboot", NULL };
 
   glnx_autofd int rootns_fd = -1;
   if (!glnx_openat_rdonly (AT_FDCWD, "/proc/1/ns/mnt", TRUE, &rootns_fd, error))
     return FALSE;
 
   struct PrepareRootChildSetupContext ctx = {
-    .deployment_dfd = deployment_dfd,
+    .deployment_path = deployment_fullpath,
     .rootns_fd = rootns_fd,
   };
 
-  if (!g_spawn_sync (NULL, (char **)argv, NULL, 0, prepare_root_child_setup, &ctx, NULL, NULL,
-                     &estatus, error))
+  if (!g_spawn_sync (NULL, (char **)argv, NULL, G_SPAWN_SEARCH_PATH, prepare_root_child_setup, &ctx,
+                     NULL, NULL, &estatus, error))
     return FALSE;
 
   if (!g_spawn_check_exit_status (estatus, error))
-    return FALSE;
+    {
+      int flags = G_SPAWN_SEARCH_PATH | G_SPAWN_STDERR_TO_DEV_NULL;
+      // If we failed to initialize the soft reboot, ensure that we've unwound any mounts
+      const char *umount_argv[] = { "umount", "-R", "/run/nextroot", NULL };
+      // To aid debugging allow skipping cleanup on failure
+      if (!g_getenv ("OSTREE_SKIP_NEXTROOT_CLEANUP"))
+        g_spawn_sync (NULL, (char **)umount_argv, NULL, flags, NULL, NULL, NULL, NULL, NULL, NULL);
+      return FALSE;
+    }
 
   sd_journal_print (LOG_INFO, "Set up soft reboot at /run/nextroot");
 
