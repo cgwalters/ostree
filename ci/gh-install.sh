@@ -89,7 +89,6 @@ case "$ID" in
             libavahi-client-dev
             libavahi-glib-dev
             libcap-dev
-            libfuse-dev
             libgirepository1.0-dev
             libglib2.0-dev
             libglib2.0-doc
