@@ -34,6 +34,24 @@ G_BEGIN_DECLS
  * decompression bombs that would expand to gigabytes.
  */
 #define OSTREE_STATIC_DELTA_PART_MAX_USIZE_BYTES (512ULL * 1024ULL * 1024ULL)
+
+/* Per-object safety margin (1 MiB) applied on top of a delta part's
+ * declared "usize" when computing the decompression limit for that part.
+ * The declared usize only accounts for the final on-disk size of the
+ * objects a part will produce; the part payload that actually gets
+ * decompressed is larger due to per-object mode/xattr table entries,
+ * operations bytecode, and (for bsdiff objects) an embedded 32-byte
+ * source checksum, plus GVariant framing overhead -- none of which count
+ * toward usize.  The Linux kernel caps a single inode's total xattr size
+ * at 64 KiB (XATTR_SIZE_MAX); use a full 1 MiB per object -- well over an
+ * order of magnitude beyond that -- as a generous ceiling, applied once
+ * more as a flat allowance for framing and other fixed overhead.  This
+ * still meaningfully bounds decompression relative to the declared size
+ * for the common case (few objects, small usize) while remaining
+ * generous enough to never false-positive on legitimate deltas.
+ */
+#define OSTREE_STATIC_DELTA_PART_USIZE_MARGIN_BYTES (1024ULL * 1024ULL)
+
 /* 1 byte for object type, 32 bytes for checksum */
 #define OSTREE_STATIC_DELTA_OBJTYPE_CSUM_LEN 33
 
@@ -153,8 +171,8 @@ typedef enum
 gboolean _ostree_static_delta_part_open (GInputStream *part_in, GBytes *inline_part_bytes,
                                          OstreeStaticDeltaOpenFlags flags,
                                          const char *expected_checksum, guint64 expected_usize,
-                                         GVariant **out_part, GCancellable *cancellable,
-                                         GError **error);
+                                         guint32 expected_n_objects, GVariant **out_part,
+                                         GCancellable *cancellable, GError **error);
 
 typedef struct
 {
